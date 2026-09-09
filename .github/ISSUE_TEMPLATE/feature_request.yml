@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an improvement for GitIgnore
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What workflow is currently difficult or unclear?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed interaction
+      description: Describe the behavior and any visual or accessibility considerations.
+    validations:
+      required: true

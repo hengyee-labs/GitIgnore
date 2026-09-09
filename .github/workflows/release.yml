@@ -1,0 +1,60 @@
+name: Release GitIgnore
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build unsigned public release
+    runs-on: macos-14
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: 'latest-stable'
+
+      - name: Build Universal app
+        run: |
+          xcodebuild \
+            -project GitIgnore.xcodeproj \
+            -scheme GitIgnore \
+            -configuration Release \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/GitIgnoreDerivedData" \
+            ARCHS='arm64 x86_64' \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package ad-hoc signed app
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          APP="$RUNNER_TEMP/GitIgnoreDerivedData/Build/Products/Release/GitIgnore.app"
+          ARCHIVE="GitIgnore-${VERSION}.zip"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict "$APP"
+          file "$APP/Contents/MacOS/GitIgnore"
+          ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
+          shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          gh release create "$VERSION" \
+            "GitIgnore-${VERSION}.zip" \
+            "GitIgnore-${VERSION}.zip.sha256" \
+            --title "GitIgnore ${VERSION}" \
+            --generate-notes \
+            --prerelease

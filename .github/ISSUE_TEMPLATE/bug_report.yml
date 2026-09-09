@@ -1,0 +1,36 @@
+name: Bug report
+description: Report a reproducible problem in GitIgnore
+title: "[Bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先移除仓库路径、Token、密码、私钥和私有代码，再提交日志或截图。
+  - type: input
+    id: version
+    attributes:
+      label: GitIgnore version
+      placeholder: 0.1.0-alpha
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS and architecture
+      placeholder: macOS 15.6, Apple Silicon
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: Describe the exact clicks or Git commands.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true

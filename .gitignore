@@ -1,0 +1,33 @@
+.DS_Store
+DerivedData/
+build/
+.build/
+*.xcuserstate
+xcuserdata/
+
+# Local app artifacts
+*.app
+*.dSYM
+*.dmg
+*.zip
+
+# Xcode user data and local settings
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# Release and signing secrets
+*.p12
+*.mobileprovision
+*.provisionprofile
+*.cer
+*.pem
+*.key
+*.private
+secrets/
+.env
+.env.*
+!.env.example
+
+# Sparkle / release credentials
+appcast.local.xml
+sparkle_private_key*
