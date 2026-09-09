@@ -30,6 +30,8 @@ git push origin v0.1.0-alpha
 
 The workflow uploads `GitIgnore-v0.1.0-alpha.dmg`, its SHA-256 file, and the corresponding ZIP files to the GitHub Release.
 
+If a release failed before it was created, fix the workflow on `main`, then use Actions → Release GitIgnore → Run workflow and enter the existing tag. The workflow checks out that tag's source and uses the updated packaging steps. Existing tags do not need to be moved or recreated.
+
 ## Gatekeeper limitation
 
 The release is not signed with Apple Developer ID and is not notarized. Users may need to right-click the app and choose Open on first launch. Never describe this package as notarized or as bypassing macOS security controls.

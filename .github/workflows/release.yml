@@ -1,6 +1,12 @@
 name: Release GitIgnore
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build and publish
+        required: true
+        type: string
   push:
     tags:
       - 'v*'
@@ -12,10 +18,19 @@ jobs:
   release:
     name: Build unsigned public release
     runs-on: macos-14
+    env:
+      VERSION: ${{ inputs.tag || github.ref_name }}
 
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Validate release tag
+        run: |
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]
+          test "$(git rev-parse HEAD)" = "$(git rev-parse "refs/tags/$VERSION^{commit}")"
 
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
@@ -24,7 +39,7 @@ jobs:
 
       - name: Build Universal app
         run: |
-          APP_VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION="${VERSION#v}"
           APP_VERSION="${APP_VERSION%%-*}"
           xcodebuild \
             -project GitIgnore.xcodeproj \
@@ -40,15 +55,13 @@ jobs:
             build
 
       - name: Package ad-hoc signed app
-        env:
-          VERSION: ${{ github.ref_name }}
         run: |
           APP="$RUNNER_TEMP/GitIgnoreDerivedData/Build/Products/Release/GitIgnore.app"
           ARCHIVE="GitIgnore-${VERSION}.zip"
           DMG="GitIgnore-${VERSION}.dmg"
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep --strict "$APP"
-          lipo -verify_arch arm64 x86_64 "$APP/Contents/MacOS/GitIgnore"
+          lipo "$APP/Contents/MacOS/GitIgnore" -verify_arch arm64 x86_64
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
           shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
           DMG_ROOT=$(mktemp -d "$RUNNER_TEMP/GitIgnore-dmg.XXXXXX")
@@ -61,7 +74,7 @@ jobs:
       - name: Preserve release packages
         uses: actions/upload-artifact@v4
         with:
-          name: GitIgnore-${{ github.ref_name }}
+          name: GitIgnore-${{ env.VERSION }}
           path: |
             GitIgnore-*.dmg
             GitIgnore-*.zip
@@ -71,7 +84,6 @@ jobs:
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ github.ref_name }}
         run: |
           gh release create "$VERSION" \
             "GitIgnore-${VERSION}.zip" \
