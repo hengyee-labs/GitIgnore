@@ -41,11 +41,14 @@ jobs:
         run: |
           APP="$RUNNER_TEMP/GitIgnoreDerivedData/Build/Products/Release/GitIgnore.app"
           ARCHIVE="GitIgnore-${VERSION}.zip"
+          DMG="GitIgnore-${VERSION}.dmg"
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep --strict "$APP"
           file "$APP/Contents/MacOS/GitIgnore"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
           shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+          hdiutil create -volname "GitIgnore ${VERSION}" -srcfolder "$APP" -ov -format UDZO "$DMG"
+          shasum -a 256 "$DMG" > "$DMG.sha256"
 
       - name: Create GitHub Release
         env:
@@ -55,6 +58,8 @@ jobs:
           gh release create "$VERSION" \
             "GitIgnore-${VERSION}.zip" \
             "GitIgnore-${VERSION}.zip.sha256" \
+            "GitIgnore-${VERSION}.dmg" \
+            "GitIgnore-${VERSION}.dmg.sha256" \
             --title "GitIgnore ${VERSION}" \
             --generate-notes \
             --prerelease

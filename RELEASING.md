@@ -18,7 +18,17 @@ git tag -a v0.1.0-alpha -m "GitIgnore v0.1.0-alpha"
 git push origin v0.1.0-alpha
 ```
 
-The release workflow builds a Universal app, applies an ad-hoc signature, creates a ZIP and SHA-256 file, and publishes a prerelease on GitHub.
+The release workflow builds a Universal app, applies an ad-hoc signature, creates a ZIP, a DMG, their SHA-256 files, and publishes a prerelease on GitHub.
+
+The DMG is created by `hdiutil` on the macOS GitHub Actions runner. Push an annotated version tag to publish both packages automatically:
+
+```bash
+git push origin main
+git tag -a v0.1.0-alpha -m "GitIgnore v0.1.0-alpha"
+git push origin v0.1.0-alpha
+```
+
+The workflow uploads `GitIgnore-v0.1.0-alpha.dmg`, its SHA-256 file, and the corresponding ZIP files to the GitHub Release.
 
 ## Gatekeeper limitation
 
