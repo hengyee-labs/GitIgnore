@@ -2,9 +2,21 @@
 
 ## [Unreleased]
 
-### Planned
+## [0.1.2-alpha] - 2026-09-09
 
-- Public GitHub repository and community feedback workflow.
+### Fixed
+
+- Fix Swift 6 compilation on Xcode 16.2 when collecting process memory diagnostics.
+- Package the complete app bundle and an Applications shortcut at the DMG root.
+- Verify Universal architectures and the DMG before publishing; retain packages as workflow artifacts.
+- Match the packaged app version to the release tag.
+
+## [0.1.1-alpha] - 2026-09-09
+
+### Added
+
+- Bilingual README with screenshots and a DMG release workflow.
+- This tag did not produce release binaries because the CI build failed; use 0.1.2-alpha or newer.
 
 ## [0.1.0-alpha] - 2026-09-09
 

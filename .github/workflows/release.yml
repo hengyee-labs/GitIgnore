@@ -24,6 +24,8 @@ jobs:
 
       - name: Build Universal app
         run: |
+          APP_VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION="${APP_VERSION%%-*}"
           xcodebuild \
             -project GitIgnore.xcodeproj \
             -scheme GitIgnore \
@@ -33,6 +35,8 @@ jobs:
             ARCHS='arm64 x86_64' \
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION="$APP_VERSION" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
             build
 
       - name: Package ad-hoc signed app
@@ -44,11 +48,25 @@ jobs:
           DMG="GitIgnore-${VERSION}.dmg"
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep --strict "$APP"
-          file "$APP/Contents/MacOS/GitIgnore"
+          lipo -verify_arch arm64 x86_64 "$APP/Contents/MacOS/GitIgnore"
           ditto -c -k --sequesterRsrc --keepParent "$APP" "$ARCHIVE"
           shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
-          hdiutil create -volname "GitIgnore ${VERSION}" -srcfolder "$APP" -ov -format UDZO "$DMG"
+          DMG_ROOT=$(mktemp -d "$RUNNER_TEMP/GitIgnore-dmg.XXXXXX")
+          ditto "$APP" "$DMG_ROOT/GitIgnore.app"
+          ln -s /Applications "$DMG_ROOT/Applications"
+          hdiutil create -volname "GitIgnore ${VERSION}" -srcfolder "$DMG_ROOT" -format UDZO "$DMG"
+          hdiutil verify "$DMG"
           shasum -a 256 "$DMG" > "$DMG.sha256"
+
+      - name: Preserve release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: GitIgnore-${{ github.ref_name }}
+          path: |
+            GitIgnore-*.dmg
+            GitIgnore-*.zip
+            GitIgnore-*.sha256
+          if-no-files-found: error
 
       - name: Create GitHub Release
         env:
@@ -61,5 +79,6 @@ jobs:
             "GitIgnore-${VERSION}.dmg" \
             "GitIgnore-${VERSION}.dmg.sha256" \
             --title "GitIgnore ${VERSION}" \
+            --verify-tag \
             --generate-notes \
             --prerelease
