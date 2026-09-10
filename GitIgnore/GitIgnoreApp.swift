@@ -110,6 +110,12 @@ struct GitIgnoreApp: App {
                 Divider()
                 Button("刷新仓库") { Task { await appState.refreshRepository() } }
                     .keyboardShortcut("r", modifiers: .command)
+                Button("Fetch 远程更新") { Task { await appState.fetch() } }
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                Button("Pull 远程提交") { Task { await appState.pull() } }
+                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                Button("Push 本地提交") { Task { await appState.push() } }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
                 Button("在终端中打开") { appState.openTerminal() }
                     .keyboardShortcut("t", modifiers: .option)
             }

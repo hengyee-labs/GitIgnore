@@ -6,7 +6,10 @@ import Observation
 @Observable
 final class AppState {
     var selectedSection: SidebarSection = .overview {
-        didSet { synchronizeInspectorSelection() }
+        didSet {
+            UserDefaults.standard.set(selectedSection.rawValue, forKey: "orbit.lastSelectedSection")
+            synchronizeInspectorSelection()
+        }
     }
     var repository: RepositorySummary?
     var recentRepositories: [RecentRepository] = []
@@ -83,6 +86,10 @@ final class AppState {
     @ObservationIgnored var commitFileLoadGeneration: UInt = 0
     @ObservationIgnored var stashPreviewGeneration: UInt = 0
     init() {
+        if let rawSection = UserDefaults.standard.string(forKey: "orbit.lastSelectedSection"),
+           let savedSection = SidebarSection(rawValue: rawSection) {
+            selectedSection = savedSection
+        }
         if let data = UserDefaults.standard.data(forKey: recentRepositoriesKey),
            let savedRepositories = try? JSONDecoder().decode([RecentRepository].self, from: data) {
             recentRepositories = savedRepositories
