@@ -5,6 +5,20 @@ enum HistoryGraphMode: String, CaseIterable {
     case full
 }
 
+enum HistoryScope: String, CaseIterable {
+    case all
+    case current
+    case incoming
+
+    var title: String {
+        switch self {
+        case .all: AppLanguage.text("所有分支", "All branches")
+        case .current: AppLanguage.text("当前分支", "Current branch")
+        case .incoming: AppLanguage.text("待 Pull", "Ready to pull")
+        }
+    }
+}
+
 struct GitGraphNode: Sendable {
     let lane: Int
     let incomingLanes: [Int]

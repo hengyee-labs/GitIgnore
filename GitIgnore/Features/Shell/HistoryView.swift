@@ -13,15 +13,33 @@ struct HistoryView: View {
     @State private var localGraphNodes: [String: GitGraphNode] = [:]
     @State private var incomingGraphNodes: [String: GitGraphNode] = [:]
     @AppStorage("gitignore.history.graphMode") private var graphModeRawValue = HistoryGraphMode.clear.rawValue
+    @AppStorage("gitignore.history.scope") private var historyScopeRawValue = HistoryScope.all.rawValue
 
     private var graphMode: HistoryGraphMode {
         HistoryGraphMode(rawValue: graphModeRawValue) ?? .clear
     }
 
+    private var historyScope: HistoryScope {
+        HistoryScope(rawValue: historyScopeRawValue) ?? .all
+    }
+
     private var filteredCommits: [GitCommitSummary] {
+        let source: [GitCommitSummary]
+        switch historyScope {
+        case .all: source = appState.commits
+        case .incoming: source = []
+        case .current:
+            let current = appState.repository?.branch ?? ""
+            source = appState.commits.filter { commit in
+                commit.refs.contains { reference in
+                    let normalized = reference.replacingOccurrences(of: "HEAD -> ", with: "")
+                    return normalized == current || normalized.hasSuffix("/\(current)")
+                }
+            }
+        }
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedQuery.isEmpty else { return appState.commits }
-        return appState.commits.filter {
+        guard !normalizedQuery.isEmpty else { return source }
+        return source.filter {
             $0.subject.localizedCaseInsensitiveContains(normalizedQuery)
                 || $0.author.localizedCaseInsensitiveContains(normalizedQuery)
                 || $0.shortHash.localizedCaseInsensitiveContains(normalizedQuery)
@@ -29,6 +47,7 @@ struct HistoryView: View {
     }
 
     private var filteredIncomingCommits: [GitCommitSummary] {
+        guard historyScope != .current else { return [] }
         let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !normalizedQuery.isEmpty else { return appState.incomingCommits }
         return appState.incomingCommits.filter {
@@ -288,6 +307,15 @@ struct HistoryView: View {
                 "清晰模式适合日常阅读；完整图谱用于查看复杂分支拓扑",
                 "Use Clear for everyday reading and Full Graph for complex topology"
             ))
+            Picker(AppLanguage.text("历史范围", "History scope"), selection: $historyScopeRawValue) {
+                ForEach(HistoryScope.allCases, id: \.rawValue) { scope in
+                    Text(scope.title).tag(scope.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .frame(width: 118)
+            .help(AppLanguage.text("按分支范围筛选提交，不会重新读取仓库", "Filter commits by branch scope without reloading the repository"))
         }
         .orbitFont(.caption2, weight: .medium)
         .foregroundStyle(OrbitDesign.secondaryText)

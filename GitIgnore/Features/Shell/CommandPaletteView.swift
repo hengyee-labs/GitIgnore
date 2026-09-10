@@ -22,6 +22,9 @@ struct CommandPaletteView: View {
             CommandItem(id: "stashes", title: "查看 Stash 临时保存", shortcut: "", symbol: "archivebox") { $0.selectSection(.stashes) },
             CommandItem(id: "worktrees", title: "查看并行工作区", shortcut: "", symbol: "point.3.connected.trianglepath.dotted") { $0.selectSection(.worktrees) },
             CommandItem(id: "refresh", title: "刷新仓库", shortcut: "⌘R", symbol: "arrow.clockwise") { state in Task { await state.refreshRepository() }; state.isCommandPalettePresented = false },
+            CommandItem(id: "fetch", title: "Fetch 远程更新", shortcut: "", symbol: "arrow.down.circle") { state in Task { await state.fetch() }; state.isCommandPalettePresented = false },
+            CommandItem(id: "pull", title: "Pull 远程提交", shortcut: "", symbol: "arrow.down.to.line") { state in Task { await state.pull() }; state.isCommandPalettePresented = false },
+            CommandItem(id: "push", title: "Push 本地提交", shortcut: "", symbol: "arrow.up.to.line") { state in Task { await state.push() }; state.isCommandPalettePresented = false },
             CommandItem(id: "terminal", title: "在终端中打开", shortcut: "⌥T", symbol: "terminal") { $0.openTerminal(); $0.isCommandPalettePresented = false }
         ]
     }
