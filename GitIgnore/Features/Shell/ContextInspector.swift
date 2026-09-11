@@ -172,6 +172,25 @@ struct FileInspector: View {
                 statusPill(file.kind.title, color: fileColor)
                 statusPill(file.indexCode == " " ? "未 Stage" : "已 Stage", color: OrbitDesign.violet)
             }
+            HStack(spacing: 8) {
+                if file.isStaged {
+                    Button { Task { await appState.unstage(file) } } label: {
+                        Label("取消 Stage", systemImage: "tray.and.arrow.up")
+                    }
+                } else {
+                    Button { Task { await appState.stage(file) } } label: {
+                        Label("Stage", systemImage: "tray.and.arrow.down")
+                    }
+                }
+                if !file.hasConflict, file.hasUnstagedChanges {
+                    Button(role: .destructive) { Task { await appState.discardFile(file) } } label: {
+                        Label("丢弃", systemImage: "trash")
+                    }
+                }
+                Spacer()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
         .padding(.horizontal, 16)
         .padding(.top, 18)
