@@ -81,6 +81,12 @@ private final class GitProcessExecution: @unchecked Sendable {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        // Git may call getcwd before honoring -C. Always give it an accessible
+        // repository working directory instead of inheriting the app's cwd.
+        if let index = arguments.firstIndex(of: "-C"), arguments.indices.contains(arguments.index(after: index)) {
+            let path = arguments[arguments.index(after: index)]
+            process.currentDirectoryURL = URL(fileURLWithPath: path, isDirectory: true)
+        }
         if !environment.isEmpty {
             process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
         }
