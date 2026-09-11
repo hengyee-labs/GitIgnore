@@ -20,7 +20,7 @@ struct SettingsView: View {
     @AppStorage("orbit.sidebarFooter.maxLines") private var footerMaxLines = 2
     @AppStorage(RemoteCheckPreferences.notificationsKey) private var remoteNotificationsEnabled = true
     @AppStorage(RemoteCheckPreferences.timeoutKey) private var remoteTimeoutSeconds = RemoteCheckPreferences.defaultTimeout
-    @State private var selectedPane: SettingsPane = .profile
+    @AppStorage("orbit.settings.selectedPane") private var selectedPane: SettingsPane = .profile
     @State private var notificationPermission: NotificationPermissionState = .notRequested
     @State private var isRequestingNotificationPermission = false
     @State private var notificationPermissionMessage: String?
