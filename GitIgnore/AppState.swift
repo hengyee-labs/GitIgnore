@@ -85,6 +85,8 @@ final class AppState {
     @ObservationIgnored var commitDetailLoadGeneration: UInt = 0
     @ObservationIgnored var commitFileLoadGeneration: UInt = 0
     @ObservationIgnored var stashPreviewGeneration: UInt = 0
+    @ObservationIgnored private var securityScopedURLs: [String: URL] = [:]
+    private let repositoryBookmarksKey = "orbit.repositoryBookmarks"
     init() {
         if let rawSection = UserDefaults.standard.string(forKey: "orbit.lastSelectedSection"),
            let savedSection = SidebarSection(rawValue: rawSection) {
@@ -131,13 +133,14 @@ final class AppState {
     }
 
     func openRepository(_ url: URL, selectOverview: Bool = false) async {
+        let accessURL = resolveRepositoryAccessURL(url)
         let performanceToken = PerformanceDiagnostics.begin(category: "Repository", name: "open-or-switch")
         defer { PerformanceDiagnostics.end(performanceToken, cancelled: Task.isCancelled) }
         let loadID = UUID()
         repositorySessionGeneration &+= 1
         let sessionGeneration = repositorySessionGeneration
         activeRepositoryLoadID = loadID
-        let requestedPath = url.standardizedFileURL.path
+        let requestedPath = accessURL.standardizedFileURL.path
         if repository?.path != requestedPath {
             cancelRepositoryScopedWork()
         }
@@ -151,7 +154,7 @@ final class AppState {
 
         do {
             try Task.checkCancellation()
-            let root = try await gitRunner.repositoryRoot(at: url)
+            let root = try await gitRunner.repositoryRoot(at: accessURL)
             try Task.checkCancellation()
             let shouldCheckRemote = selectOverview
                 || repository?.path != root.path
@@ -658,6 +661,31 @@ final class AppState {
         recentRepositories.removeAll { $0.path == root.path }
         recentRepositories.insert(newEntry, at: 0)
         persistRecentRepositories()
+    }
+
+    private func resolveRepositoryAccessURL(_ url: URL) -> URL {
+        let path = url.standardizedFileURL.path
+        if let existing = securityScopedURLs[path] { return existing }
+        let bookmarks = UserDefaults.standard.dictionary(forKey: repositoryBookmarksKey) as? [String: Data]
+        if let data = bookmarks?[path] {
+            var stale = false
+            do {
+                let resolved = try URL(resolvingBookmarkData: data, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
+                if resolved.startAccessingSecurityScopedResource() { securityScopedURLs[path] = resolved }
+                if stale { saveRepositoryBookmark(for: resolved) }
+                return resolved
+            } catch {
+                UserDefaults.standard.set(nil, forKey: repositoryBookmarksKey)
+            }
+        }
+        return url
+    }
+
+    func saveRepositoryBookmark(for url: URL) {
+        guard let data = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) else { return }
+        var bookmarks = UserDefaults.standard.dictionary(forKey: repositoryBookmarksKey) as? [String: Data] ?? [:]
+        bookmarks[url.standardizedFileURL.path] = data
+        UserDefaults.standard.set(bookmarks, forKey: repositoryBookmarksKey)
     }
 
     func persistRecentRepositories() {
