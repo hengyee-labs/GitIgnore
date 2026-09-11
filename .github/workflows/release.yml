@@ -92,5 +92,4 @@ jobs:
             "GitIgnore-${VERSION}.dmg.sha256" \
             --title "GitIgnore ${VERSION}" \
             --verify-tag \
-            --generate-notes \
-            --prerelease
+            --generate-notes
