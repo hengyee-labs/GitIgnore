@@ -207,6 +207,7 @@ struct RootView: View {
                 )
         }
         .animation(OrbitMotion.page(reduceMotion: reduceMotion), value: appState.selectedSection)
+        .animation(OrbitMotion.page(reduceMotion: reduceMotion), value: appState.isDiffFocusPresented)
     }
 
     @ViewBuilder
