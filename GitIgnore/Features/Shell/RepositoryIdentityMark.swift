@@ -92,7 +92,9 @@ struct PulseMetric: View {
     var action: (() -> Void)? = nil
 
     var body: some View {
-        Group {
+        Button {
+            action?()
+        } label: {
         HStack(spacing: 10) {
             Image(systemName: symbol)
                 .font(.system(size: 11, weight: .bold))
@@ -114,9 +116,8 @@ struct PulseMetric: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title) \(value)")
         }
-        .contentShape(Rectangle())
-        .onTapGesture { action?() }
-        .accessibilityAddTraits(action == nil ? [] : .isButton)
+        .buttonStyle(.plain)
+        .disabled(action == nil)
     }
 }
 
