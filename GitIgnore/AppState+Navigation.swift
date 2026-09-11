@@ -55,7 +55,7 @@ extension AppState {
         isCommandPalettePresented = false
     }
 
-    private func beginOpeningRepository(_ url: URL) {
+    func beginOpeningRepository(_ url: URL) {
         repositoryOpenTask?.cancel()
         repositoryOpenTask = Task { [weak self] in
             await self?.openRepository(url, selectOverview: true)

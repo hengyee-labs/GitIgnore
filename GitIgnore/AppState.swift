@@ -240,7 +240,11 @@ final class AppState {
             return
         } catch {
             if activeRepositoryLoadID == loadID {
-                present(error: error, title: "无法打开仓库")
+                if case GitRunnerError.notARepository = error {
+                    await requestExistingRepositoryAccess(accessURL)
+                } else {
+                    present(error: error, title: "无法打开仓库")
+                }
             }
         }
     }
@@ -686,6 +690,24 @@ final class AppState {
         var bookmarks = UserDefaults.standard.dictionary(forKey: repositoryBookmarksKey) as? [String: Data] ?? [:]
         bookmarks[url.standardizedFileURL.path] = data
         UserDefaults.standard.set(bookmarks, forKey: repositoryBookmarksKey)
+    }
+
+    private func requestExistingRepositoryAccess(_ url: URL) async {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            presentMessage("原项目路径已不存在，请从新的位置打开仓库。", title: "项目路径不可用")
+            return
+        }
+        let panel = NSOpenPanel()
+        panel.title = "授权访问已有项目"
+        panel.message = "只需授权一次，无需重新导入项目。"
+        panel.prompt = "授权并打开"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = url
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
+        saveRepositoryBookmark(for: selectedURL)
+        beginOpeningRepository(selectedURL)
     }
 
     func persistRecentRepositories() {
