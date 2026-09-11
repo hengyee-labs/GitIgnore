@@ -197,7 +197,6 @@ struct RootView: View {
                     selectedContent
                 }
             }
-                .id(appState.isDiffFocusPresented ? "diff-focus" : "section-\(appState.selectedSection)")
                 .transition(
                     reduceMotion
                         ? .opacity
