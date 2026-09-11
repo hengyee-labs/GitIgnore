@@ -7,6 +7,7 @@ struct SidebarView: View {
     @Binding var selection: SidebarSection
     @State private var hoveredSection: SidebarSection?
     @State private var repositoryHeaderHovered = false
+    @State private var recentSearch = ""
     @AppStorage("orbit.sidebarFooter.enabled") private var footerEnabled = true
     @AppStorage("orbit.sidebarFooter.message") private var footerMessage = "保持专注，\n让每次提交都有意义。"
     @AppStorage("orbit.sidebarFooter.wraps") private var footerWraps = true
@@ -104,7 +105,10 @@ struct SidebarView: View {
             if !appState.recentRepositories.isEmpty {
                 Divider()
                 Text("最近打开的项目")
-                ForEach(appState.recentRepositories) { recent in
+                if appState.recentRepositories.count > 5 {
+                    TextField("搜索项目…", text: $recentSearch)
+                }
+                ForEach(filteredRecentRepositories) { recent in
                     Button {
                         appState.openRecentRepository(recent)
                     } label: {
@@ -118,6 +122,14 @@ struct SidebarView: View {
                 Divider()
                 Menu("管理最近项目") {
                     ForEach(appState.recentRepositories) { recent in
+                        Button {
+                            togglePinned(recent)
+                        } label: {
+                            Label(
+                                isPinned(recent) ? "取消固定 \(recent.name)" : "固定 \(recent.name)",
+                                systemImage: isPinned(recent) ? "pin.slash" : "pin"
+                            )
+                        }
                         Button("移除 \(recent.name)", systemImage: "xmark") {
                             appState.removeRecentRepository(recent)
                         }
@@ -144,6 +156,31 @@ struct SidebarView: View {
         }
         .menuStyle(.borderlessButton)
         .help("切换或管理仓库")
+    }
+
+    private var filteredRecentRepositories: [RecentRepository] {
+        let query = recentSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = query.isEmpty
+            ? appState.recentRepositories
+            : appState.recentRepositories.filter {
+                $0.name.localizedCaseInsensitiveContains(query) || $0.path.localizedCaseInsensitiveContains(query)
+            }
+        return filtered.sorted { lhs, rhs in
+            if isPinned(lhs) != isPinned(rhs) { return isPinned(lhs) }
+            return lhs.lastOpened > rhs.lastOpened
+        }
+    }
+
+    private func isPinned(_ recent: RecentRepository) -> Bool {
+        let paths = UserDefaults.standard.stringArray(forKey: "orbit.pinnedRepositories") ?? []
+        return paths.contains(recent.path)
+    }
+
+    private func togglePinned(_ recent: RecentRepository) {
+        var paths = UserDefaults.standard.stringArray(forKey: "orbit.pinnedRepositories") ?? []
+        if let index = paths.firstIndex(of: recent.path) { paths.remove(at: index) }
+        else { paths.insert(recent.path, at: 0) }
+        UserDefaults.standard.set(paths, forKey: "orbit.pinnedRepositories")
     }
 
     private var repoMark: some View {
