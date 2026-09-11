@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 struct PerformanceDiagnosticsView: View {
     @Environment(AppState.self) private var appState
@@ -18,6 +19,11 @@ struct PerformanceDiagnosticsView: View {
                         .orbitFont(.caption).foregroundStyle(OrbitDesign.secondaryText)
                 }
                 Spacer()
+                Button { exportReport() } label: {
+                    Label(AppLanguage.text("导出", "Export"), systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 Button(AppLanguage.text("关闭", "Close")) { dismiss() }.keyboardShortcut(.cancelAction)
             }
             .padding(18)
@@ -171,5 +177,26 @@ struct PerformanceDiagnosticsView: View {
         }
         .padding(10)
         .background(OrbitDesign.surface, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func exportReport() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "GitIgnore-Diagnostics.txt"
+        panel.allowedContentTypes = [.plainText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let lines = [
+            "GitIgnore Performance Diagnostics",
+            "Generated: \(Date())",
+            "Memory: \(snapshot.currentMemoryBytes) bytes (peak \(snapshot.peakMemoryBytes))",
+            "CPU: \(snapshot.cpuPercent)%",
+            "Active Git tasks: \(snapshot.activeGitTasks)",
+            "Active repository tasks: \(snapshot.activeRepositoryTasks)",
+            "Total commands: \(snapshot.totalGitCommands)",
+            "Cancelled commands: \(snapshot.cancelledGitCommands)",
+            "",
+            "Phase durations:",
+            snapshot.phaseDurations.map { "- \($0.name): \(Int($0.total * 1000)) ms" }.joined(separator: "\n")
+        ].joined(separator: "\n")
+        try? lines.write(to: url, atomically: true, encoding: .utf8)
     }
 }
