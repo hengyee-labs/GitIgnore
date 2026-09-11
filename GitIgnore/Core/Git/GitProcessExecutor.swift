@@ -83,10 +83,10 @@ private final class GitProcessExecution: @unchecked Sendable {
         process.arguments = arguments
         // Git may call getcwd before honoring -C. Always give it an accessible
         // repository working directory instead of inheriting the app's cwd.
-        if let index = arguments.firstIndex(of: "-C"), arguments.indices.contains(arguments.index(after: index)) {
-            let path = arguments[arguments.index(after: index)]
-            process.currentDirectoryURL = URL(fileURLWithPath: path, isDirectory: true)
-        }
+        // Keep cwd in a sandbox-safe location. Git still receives the target
+        // repository through -C, but never calls getcwd on a user-protected
+        // Desktop/Documents path inherited from the host application.
+        process.currentDirectoryURL = FileManager.default.temporaryDirectory
         if !environment.isEmpty {
             process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, override in override }
         }
