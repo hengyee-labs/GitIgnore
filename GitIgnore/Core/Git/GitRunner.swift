@@ -231,6 +231,12 @@ actor GitRunner {
         return parseCommitSummaries(output.standardOutput)
     }
 
+    /// Includes unlabeled ancestors that ref decoration matching would miss.
+    func currentBranchCommitIDs(at repositoryURL: URL, limit: Int = 2000) async throws -> Set<String> {
+        let output = try await run(arguments: ["-C", repositoryURL.path, "rev-list", "--topo-order", "-n", "\(limit)", "HEAD"])
+        return Set(output.standardOutput.split(whereSeparator: \.isNewline).map(String.init))
+    }
+
     private static let commitLogFormat = "%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%D%x1f%P%x1e"
 
     private func parseCommitSummaries(_ text: String) -> [GitCommitSummary] {

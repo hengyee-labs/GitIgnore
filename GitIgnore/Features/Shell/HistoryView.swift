@@ -12,6 +12,7 @@ struct HistoryView: View {
     @State private var confirmsUndo = false
     @State private var localGraphNodes: [String: GitGraphNode] = [:]
     @State private var incomingGraphNodes: [String: GitGraphNode] = [:]
+    @State private var currentBranchCommitIDs: Set<String> = []
     @AppStorage("gitignore.history.graphMode") private var graphModeRawValue = HistoryGraphMode.clear.rawValue
     @AppStorage("gitignore.history.scope") private var historyScopeRawValue = HistoryScope.all.rawValue
 
@@ -31,7 +32,8 @@ struct HistoryView: View {
         case .current:
             let current = appState.repository?.branch ?? ""
             source = appState.commits.filter { commit in
-                commit.refs.contains { reference in
+                if !currentBranchCommitIDs.isEmpty { return currentBranchCommitIDs.contains(commit.hash) }
+                return commit.refs.contains { reference in
                     let normalized = reference.replacingOccurrences(of: "HEAD -> ", with: "")
                     return normalized == current || normalized.hasSuffix("/\(current)")
                 }
@@ -158,6 +160,10 @@ struct HistoryView: View {
             incomingGraphNodes = await Task.detached(priority: .utility) {
                 GitGraphLayout.build(commits: commits)
             }.value
+        }
+        .task(id: "branch-ancestry-\(appState.repository?.path ?? "")-\(appState.repository?.branch ?? "")") {
+            guard historyScope == .current, let repository = appState.repository else { return }
+            currentBranchCommitIDs = (try? await appState.gitRunner.currentBranchCommitIDs(at: URL(fileURLWithPath: repository.path, isDirectory: true))) ?? []
         }
     }
 
