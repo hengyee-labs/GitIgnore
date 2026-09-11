@@ -409,6 +409,18 @@ struct HistoryView: View {
                             Text("·")
                             Text(commit.shortHash)
                                 .font(.caption2.monospaced())
+                            let currentBranch = appState.repository?.branch ?? ""
+                            if commit.refs.contains(where: { ref in
+                                let normalized = ref.replacingOccurrences(of: "HEAD -> ", with: "")
+                                return normalized == currentBranch || normalized.hasSuffix("/\(currentBranch)")
+                            }) {
+                                Text(AppLanguage.text("当前", "HEAD"))
+                                    .orbitFont(.caption2, weight: .bold)
+                                    .foregroundStyle(OrbitDesign.accent)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(OrbitDesign.accent.opacity(0.10), in: Capsule())
+                            }
                         }
                         .orbitFont(.caption2)
                         .foregroundStyle(OrbitDesign.secondaryText)

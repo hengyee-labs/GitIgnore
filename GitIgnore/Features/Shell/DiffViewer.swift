@@ -249,6 +249,12 @@ struct OrbitDiffViewer: View {
                 .foregroundStyle(OrbitDesign.secondaryText)
                 .disabled(changeAnchors.isEmpty)
                 .help("上一个或下一个修改区块")
+                Text(AppLanguage.text("修改 (changeAnchors.count)", "(changeAnchors.count) changes"))
+                    .font(.caption2.monospacedDigit().weight(.medium))
+                    .foregroundStyle(changeAnchors.isEmpty ? OrbitDesign.tertiaryText : OrbitDesign.amber)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                    .background(OrbitDesign.elevatedSurface, in: Capsule())
                 Text(displayLines.count == totalLineCount
                      ? "\(totalLineCount) 行"
                      : "\(displayLines.count) / \(totalLineCount) 行")

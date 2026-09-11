@@ -26,6 +26,10 @@ struct CommitInspector: View {
                 if !commit.refs.isEmpty {
                     detailRow("引用", value: commit.refs.joined(separator: ", "))
                 }
+                HStack(spacing: 8) {
+                    statusPill(title: AppLanguage.text("当前分支", "Current branch"), value: appState.repository?.branch ?? "-")
+                    statusPill(title: AppLanguage.text("提交范围", "Scope"), value: commit.refs.isEmpty ? AppLanguage.text("本地", "Local") : AppLanguage.text("已引用", "Referenced"))
+                }
 
                 if appState.isLoadingCommitDetail {
                     loadingState
@@ -216,5 +220,16 @@ struct CommitInspector: View {
         case .untracked: OrbitDesign.blue
         case .conflicted: OrbitDesign.coral
         }
+    }
+
+    private func statusPill(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).orbitFont(.caption2).foregroundStyle(OrbitDesign.secondaryText)
+            Text(value).orbitFont(.caption2, weight: .semibold).lineLimit(1).truncationMode(.middle)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(OrbitDesign.recessedSurface, in: RoundedRectangle(cornerRadius: 7))
     }
 }
