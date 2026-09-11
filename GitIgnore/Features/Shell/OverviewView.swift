@@ -110,13 +110,13 @@ struct OverviewView: View {
 
     private func repositoryPulse(_ repository: RepositorySummary) -> some View {
         HStack(spacing: 0) {
-            PulseMetric(title: "Pull", value: repository.behindCount, symbol: "arrow.down", color: repository.behindCount > 0 ? OrbitDesign.amber : OrbitDesign.tertiaryText)
+            PulseMetric(title: "Pull", value: repository.behindCount, symbol: "arrow.down", color: repository.behindCount > 0 ? OrbitDesign.amber : OrbitDesign.tertiaryText) { appState.selectSection(.history) }
             pulseSeparator
-            PulseMetric(title: "Push", value: repository.aheadCount, symbol: "arrow.up", color: repository.aheadCount > 0 ? OrbitDesign.blue : OrbitDesign.tertiaryText)
+            PulseMetric(title: "Push", value: repository.aheadCount, symbol: "arrow.up", color: repository.aheadCount > 0 ? OrbitDesign.blue : OrbitDesign.tertiaryText) { appState.selectSection(.branches) }
             pulseSeparator
-            PulseMetric(title: AppLanguage.text("本地变更", "Changes"), value: repository.changedFileCount, symbol: "doc.badge.ellipsis", color: repository.changedFileCount > 0 ? OrbitDesign.amber : OrbitDesign.tertiaryText)
+            PulseMetric(title: AppLanguage.text("本地变更", "Changes"), value: repository.changedFileCount, symbol: "doc.badge.ellipsis", color: repository.changedFileCount > 0 ? OrbitDesign.amber : OrbitDesign.tertiaryText) { appState.selectSection(.changes) }
             pulseSeparator
-            PulseMetric(title: AppLanguage.text("冲突", "Conflicts"), value: conflictCount, symbol: "exclamationmark.triangle", color: conflictCount > 0 ? OrbitDesign.coral : OrbitDesign.tertiaryText)
+            PulseMetric(title: AppLanguage.text("冲突", "Conflicts"), value: conflictCount, symbol: "exclamationmark.triangle", color: conflictCount > 0 ? OrbitDesign.coral : OrbitDesign.tertiaryText) { appState.selectSection(.changes) }
         }
         .frame(minHeight: density == .compact ? 78 : 92)
         .background { OrbitPanelBackground(cornerRadius: 12) }
