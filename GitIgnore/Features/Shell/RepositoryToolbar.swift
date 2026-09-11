@@ -227,6 +227,9 @@ struct RepositoryToolbar: View {
         if case .unavailable = appState.repositoryHealth.remoteConnection {
             return AppLanguage.text("远程暂时不可用", "Remote unavailable")
         }
+        if case .timedOut = appState.repositoryHealth.remoteConnection { return AppLanguage.text("远程连接超时", "Remote connection timed out") }
+        if case .unauthorized = appState.repositoryHealth.remoteConnection { return AppLanguage.text("远程认证失败", "Remote authentication failed") }
+        if case .notFound = appState.repositoryHealth.remoteConnection { return AppLanguage.text("远程仓库不存在", "Remote not found") }
         if repository.behindCount > 0 {
             return AppLanguage.text("\(repository.behindCount) 个提交可拉取", "\(repository.behindCount) commits ready to Pull")
         }
@@ -246,6 +249,9 @@ struct RepositoryToolbar: View {
     private func remoteStatusColor(_ repository: RepositorySummary) -> Color {
         if appState.isCheckingRemoteUpdates { return OrbitDesign.secondaryText }
         if case .unavailable = appState.repositoryHealth.remoteConnection { return OrbitDesign.coral }
+        if case .timedOut = appState.repositoryHealth.remoteConnection { return OrbitDesign.coral }
+        if case .unauthorized = appState.repositoryHealth.remoteConnection { return OrbitDesign.coral }
+        if case .notFound = appState.repositoryHealth.remoteConnection { return OrbitDesign.coral }
         if repository.behindCount > 0 { return OrbitDesign.amber }
         if repository.aheadCount > 0 { return OrbitDesign.blue }
         if currentBranch?.needsPublish == true { return OrbitDesign.blue }

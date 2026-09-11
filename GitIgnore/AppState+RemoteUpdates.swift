@@ -84,10 +84,13 @@ extension AppState {
             } catch {
                 guard !Task.isCancelled, let current = self.repository, current.path == root.path else { return }
                 let isTimeout = error is RemoteUpdateCheckError
+                let rawMessage = error.localizedDescription
+                let isUnauthorized = rawMessage.localizedCaseInsensitiveContains("authentication") || rawMessage.localizedCaseInsensitiveContains("permission denied")
+                let isNotFound = rawMessage.localizedCaseInsensitiveContains("repository not found") || rawMessage.localizedCaseInsensitiveContains("does not appear to be a git repository")
                 let message = isTimeout
                     ? error.localizedDescription
                     : "无法连接远程仓库，可以稍后手动 Fetch。"
-                self.repositoryHealth.remoteConnection = .unavailable(message)
+                self.repositoryHealth.remoteConnection = isTimeout ? .timedOut(message) : (isUnauthorized ? .unauthorized(rawMessage) : (isNotFound ? .notFound(rawMessage) : .unavailable(message)))
                 self.repositoryHealth.lastFetchAt = Date()
                 self.feedback = AppFeedback(
                     kind: .warning,

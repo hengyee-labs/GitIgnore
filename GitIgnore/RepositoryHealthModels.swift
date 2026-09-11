@@ -11,13 +11,19 @@ enum RemoteConnectionState: Equatable, Sendable {
     case checking
     case connected
     case unavailable(String)
+    case timedOut(String)
+    case unauthorized(String)
+    case notFound(String)
 
     var title: String {
         switch self {
         case .unknown: AppLanguage.text("尚未检测", "Not Checked")
         case .checking: AppLanguage.text("正在连接", "Checking")
         case .connected: AppLanguage.text("连接正常", "Connected")
-        case .unavailable: AppLanguage.text("暂时不可用", "Unavailable")
+        case .unavailable: AppLanguage.text("网络不可用", "Network unavailable")
+        case .timedOut: AppLanguage.text("连接超时", "Connection timed out")
+        case .unauthorized: AppLanguage.text("远程认证失败", "Authentication failed")
+        case .notFound: AppLanguage.text("远程仓库不存在", "Remote not found")
         }
     }
 

@@ -407,7 +407,7 @@ struct OverviewView: View {
         switch appState.repositoryHealth.remoteConnection {
         case .checking: "arrow.triangle.2.circlepath"
         case .connected: "network"
-        case .unavailable: "wifi.exclamationmark"
+        case .unavailable, .timedOut, .unauthorized, .notFound: "wifi.exclamationmark"
         case .unknown: "questionmark.circle"
         }
     }
@@ -416,7 +416,7 @@ struct OverviewView: View {
         switch appState.repositoryHealth.remoteConnection {
         case .connected: OrbitDesign.accent
         case .checking, .unknown: OrbitDesign.amber
-        case .unavailable: OrbitDesign.coral
+        case .unavailable, .timedOut, .unauthorized, .notFound: OrbitDesign.coral
         }
     }
 
@@ -425,6 +425,8 @@ struct OverviewView: View {
         case .checking:
             return AppLanguage.text("正在检测远程更新", "Checking remote updates")
         case let .unavailable(message):
+            return message
+        case let .timedOut(message), let .unauthorized(message), let .notFound(message):
             return message
         case .unknown:
             return AppLanguage.text("尚未完成远程检测", "Remote not checked yet")
