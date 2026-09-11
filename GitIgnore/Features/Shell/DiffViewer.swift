@@ -58,6 +58,11 @@ struct OrbitDiffViewer: View {
                                     pathExtension: (diff.path as NSString).pathExtension
                                 )
                                 .id(line.id)
+                                .onAppear {
+                                    // Load one bounded page when the reader reaches its tail.
+                                    guard line.id >= displayLines.last?.id ?? -1 else { return }
+                                    showMoreLines()
+                                }
                             }
                         }
                         .frame(minWidth: wrapsLines ? 0 : 680, alignment: .leading)
@@ -70,6 +75,10 @@ struct OrbitDiffViewer: View {
                                     showsInvisibleCharacters: showsInvisibleCharacters
                                 )
                                 .id(row.id)
+                                .onAppear {
+                                    guard row.id >= splitRows.last?.id ?? -1 else { return }
+                                    showMoreLines()
+                                }
                             }
                         }
                         .frame(minWidth: 920, alignment: .leading)
