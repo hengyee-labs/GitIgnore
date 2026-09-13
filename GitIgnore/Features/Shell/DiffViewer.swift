@@ -26,6 +26,15 @@ struct OrbitDiffViewer: View {
     @State private var historyMode: DiffHistoryMode?
     @State private var isLoadingPage = false
     @State private var isCopying = false
+    @State private var searchResult = DiffSearchResult()
+    @State private var isSearching = false
+    @State private var searchError: String?
+    @State private var pageTask: Task<Void, Never>?
+    @State private var pageGeneration = UUID()
+    @State private var pageStart = 0
+    @State private var scrollTarget: Int?
+    @State private var pageOrigin = DiffSearchMatch(line: 0, oldLine: nil, newLine: nil)
+    @State private var previousPages: [DiffSearchMatch] = []
 
     private let linePageSize = 300
 
@@ -34,13 +43,21 @@ struct OrbitDiffViewer: View {
         self.title = title
         self.expandsVertically = expandsVertically
         let initial = DiffDisplayLine.parsePage(Array(diff.lines.prefix(300)), baseIndex: 0, oldLine: nil, newLine: nil)
-        _visibleLineLimit = State(initialValue: 300)
+        _visibleLineLimit = State(initialValue: min(diff.totalLineCount, initial.lines.count))
         _displayLines = State(initialValue: initial.lines)
         _parserOldLine = State(initialValue: initial.oldLine)
         _parserNewLine = State(initialValue: initial.newLine)
     }
 
     var body: some View {
+        let pairs = splitRows
+        let comparisons = pairs.reduce(into: [Int: String]()) { result, pair in
+            if let left = pair.left, let right = pair.right,
+               left.kind == .deletion, right.kind == .addition {
+                result[left.id] = right.content
+                result[right.id] = left.content
+            }
+        }
         VStack(spacing: 0) {
             toolbar
             Divider().overlay(OrbitDesign.separator)
@@ -55,30 +72,22 @@ struct OrbitDiffViewer: View {
                                     wrapsLines: wrapsLines,
                                     searchText: searchText,
                                     showsInvisibleCharacters: showsInvisibleCharacters,
-                                    pathExtension: (diff.path as NSString).pathExtension
+                                    pathExtension: (diff.path as NSString).pathExtension,
+                                    comparedWith: comparisons[line.id]
                                 )
                                 .id(line.id)
-                                .onAppear {
-                                    // Load one bounded page when the reader reaches its tail.
-                                    guard line.id >= displayLines.last?.id ?? -1 else { return }
-                                    showMoreLines()
-                                }
                             }
                         }
                         .frame(minWidth: wrapsLines ? 0 : 680, alignment: .leading)
                     } else {
                         LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(splitRows) { row in
+                            ForEach(pairs) { row in
                                 SplitDiffRow(
                                     row: row,
                                     searchText: searchText,
                                     showsInvisibleCharacters: showsInvisibleCharacters
                                 )
                                 .id(row.id)
-                                .onAppear {
-                                    guard row.id >= splitRows.last?.id ?? -1 else { return }
-                                    showMoreLines()
-                                }
                             }
                         }
                         .frame(minWidth: 920, alignment: .leading)
@@ -88,18 +97,48 @@ struct OrbitDiffViewer: View {
                 .onChange(of: selectedChangeIndex) { _, _ in scrollToSelectedChange(using: proxy) }
                 .onChange(of: searchText) { _, _ in
                     selectedSearchIndex = 0
-                    scrollToSelectedSearch(using: proxy)
+                }
+                .onChange(of: scrollTarget) { _, target in
+                    guard let target else { return }
+                    withAnimation(reduceMotion ? .easeOut(duration: 0.08) : .easeOut(duration: 0.18)) {
+                        proxy.scrollTo(target, anchor: .top)
+                    }
                 }
             }
             .frame(minHeight: 220, idealHeight: expandsVertically ? 520 : 320, maxHeight: expandsVertically ? .infinity : 440)
             .background(OrbitDesign.elevatedSurface)
 
+            if pageStart > 0 {
+                HStack {
+                    Button(AppLanguage.text("上一页", "Previous Page"), systemImage: "chevron.up") {
+                        guard let previous = previousPages.popLast() else { return }
+                        loadPage(start: previous.line, old: previous.oldLine, new: previous.newLine, remember: false)
+                    }.disabled(previousPages.isEmpty)
+                    Spacer()
+                    Button(AppLanguage.text("返回 Diff 开头", "Back to Diff Start"), systemImage: "arrow.up.to.line") {
+                        previousPages = []
+                        loadPage(start: 0, old: nil, new: nil, remember: false)
+                    }
+                }
+                .buttonStyle(.plain).padding(8)
+            }
+            if let searchError {
+                Text(searchError).orbitFont(.caption2).foregroundStyle(OrbitDesign.coral).padding(8)
+            }
+            if searchResult.truncatedLines > 0 {
+                Text(AppLanguage.text("\(searchResult.truncatedLines) 个超长行仅搜索前 256 KB", "\(searchResult.truncatedLines) oversized lines searched within the first 256 KB"))
+                    .orbitFont(.caption2).foregroundStyle(OrbitDesign.amber).padding(8)
+            }
+            if searchResult.total > searchResult.matches.count {
+                Text(AppLanguage.text("仅导航前 5,000 个匹配行", "Navigation is limited to the first 5,000 matching lines"))
+                    .orbitFont(.caption2).foregroundStyle(OrbitDesign.amber).padding(8)
+            }
             if hasMoreLines {
                 Divider().overlay(OrbitDesign.separator)
                 Button {
                     showMoreLines()
                 } label: {
-                    Label("继续显示后续 \(min(linePageSize, totalLineCount - displayLines.count)) 行", systemImage: "chevron.down")
+                    Label(AppLanguage.text("下一页 · \(min(linePageSize, totalLineCount - visibleLineLimit)) 行", "Next Page · \(min(linePageSize, totalLineCount - visibleLineLimit)) lines"), systemImage: "chevron.down")
                         .orbitFont(.caption, weight: .semibold)
                         .frame(maxWidth: .infinity)
                         .frame(height: 34)
@@ -129,13 +168,47 @@ struct OrbitDiffViewer: View {
             RoundedRectangle(cornerRadius: 10)
                 .stroke(OrbitDesign.separator, lineWidth: 1)
         }
-        .onChange(of: diff.text) { _, newText in
-            let lines = newText.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-            let initial = DiffDisplayLine.parsePage(Array(lines.prefix(linePageSize)), baseIndex: 0, oldLine: nil, newLine: nil)
-            visibleLineLimit = linePageSize
+        .onChange(of: diff.revision) { _, _ in
+            pageTask?.cancel()
+            pageGeneration = UUID()
+            pageStart = 0
+            previousPages = []
+            pageOrigin = DiffSearchMatch(line: 0, oldLine: nil, newLine: nil)
+            isLoadingPage = false
+            let initial = DiffDisplayLine.parsePage(Array(diff.lines.prefix(linePageSize)), baseIndex: 0, oldLine: nil, newLine: nil)
+            visibleLineLimit = min(diff.totalLineCount, initial.lines.count)
             displayLines = initial.lines
             parserOldLine = initial.oldLine
             parserNewLine = initial.newLine
+        }
+        .onDisappear { pageTask?.cancel(); pageGeneration = UUID() }
+        .task(id: "\(diff.revision)|\(searchText)") {
+            searchResult = DiffSearchResult()
+            searchError = nil
+            selectedSearchIndex = 0
+            selectedChangeIndex = 0
+            guard !searchText.isEmpty else { isSearching = false; return }
+            isSearching = true
+            do {
+                try await Task.sleep(for: .milliseconds(180))
+                let reader = diff.pagedReader
+                let lines = reader == nil ? diff.lines : []
+                let query = searchText
+                let task = Task.detached(priority: .utility) {
+                    if let reader { return try reader.search(query) }
+                    return try DiffTextTools.search(file: nil, lines: lines, query: query)
+                }
+                let result = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+                try Task.checkCancellation()
+                searchResult = result
+                isSearching = false
+                revealSearchMatch()
+            } catch is CancellationError {
+            } catch {
+                guard !Task.isCancelled else { return }
+                isSearching = false
+                searchError = error.localizedDescription
+            }
         }
         .sheet(item: $historyMode) { item in
             DiffFileHistoryView(path: diff.path, showsBlame: item == .blame)
@@ -143,8 +216,8 @@ struct OrbitDiffViewer: View {
         }
     }
 
-    private var totalLineCount: Int { diff.pagedReaderLineLimit }
-    private var hasMoreLines: Bool { displayLines.count < totalLineCount }
+    private var totalLineCount: Int { diff.totalLineCount }
+    private var hasMoreLines: Bool { visibleLineLimit < totalLineCount }
     private var isLineBudgetCapped: Bool { totalLineCount < diff.lines.count }
     private var scrollAxes: Axis.Set {
         mode == .unified && wrapsLines ? .vertical : [.vertical, .horizontal]
@@ -152,37 +225,54 @@ struct OrbitDiffViewer: View {
 
     private func showMoreLines() {
         guard !isLoadingPage else { return }
-        let newLimit = min(totalLineCount, visibleLineLimit + linePageSize)
-        guard newLimit > visibleLineLimit else { return }
+        loadPage(start: visibleLineLimit, old: parserOldLine, new: parserNewLine)
+    }
+
+    private func loadPage(start: Int, old: Int?, new: Int?, remember: Bool = true) {
+        pageTask?.cancel()
+        let generation = UUID()
+        pageGeneration = generation
         isLoadingPage = true
-        let start = visibleLineLimit
         let reader = diff.pagedReader
-        let fallback = Array(diff.lines.dropFirst(start).prefix(newLimit - start))
-        Task { @MainActor in
+        let fallback = reader == nil ? Array(diff.lines.dropFirst(start).prefix(linePageSize)) : []
+        pageTask = Task { @MainActor in
             let page: [String]
             if let reader {
                 page = await Task.detached(priority: .userInitiated) {
-                    reader.readLines(start: start, count: newLimit - start)
+                    reader.readLines(start: start, count: 300)
                 }.value
             } else {
                 page = fallback
             }
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, generation == pageGeneration else { return }
+            guard !page.isEmpty else {
+                isLoadingPage = false
+                searchError = AppLanguage.text("此页读取失败，请重试。", "Could not read this page. Please retry.")
+                return
+            }
             let parsed = DiffDisplayLine.parsePage(
                 page,
                 baseIndex: start,
-                oldLine: parserOldLine,
-                newLine: parserNewLine
+                oldLine: old,
+                newLine: new
             )
-            visibleLineLimit = min(newLimit, start + page.count)
-            displayLines.append(contentsOf: parsed.lines)
+            visibleLineLimit = start + page.count
+            if remember, pageOrigin.line != start {
+                previousPages.append(pageOrigin)
+                if previousPages.count > 1_000 { previousPages.removeFirst() }
+            }
+            pageOrigin = DiffSearchMatch(line: start, oldLine: old, newLine: new)
+            pageStart = start
+            displayLines = parsed.lines
             parserOldLine = parsed.oldLine
             parserNewLine = parsed.newLine
             isLoadingPage = false
+            scrollTarget = start
         }
     }
 
     private var filteredLines: [DiffDisplayLine] {
+        if !searchText.isEmpty { return displayLines }
         let contextIDs = visibleContextIDs
         let ignoredIDs = whitespaceOnlyChangeIDs
         return displayLines.filter { line in
@@ -193,9 +283,10 @@ struct OrbitDiffViewer: View {
         }
     }
 
-    private var matchingLines: [DiffDisplayLine] {
-        guard !searchText.isEmpty else { return [] }
-        return filteredLines.filter { $0.content.localizedCaseInsensitiveContains(searchText) }
+    private func revealSearchMatch() {
+        guard searchResult.matches.indices.contains(selectedSearchIndex) else { return }
+        let match = searchResult.matches[selectedSearchIndex]
+        loadPage(start: match.line, old: match.oldLine, new: match.newLine)
     }
 
     private var changeAnchors: [DiffDisplayLine] { filteredLines.filter { $0.kind == .hunk } }
@@ -237,13 +328,13 @@ struct OrbitDiffViewer: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(title ?? (diff.isStaged ? "已暂存内容" : "工作区内容"))
+                    Text(title ?? (diff.isStaged ? AppLanguage.text("已暂存内容", "Staged Changes") : AppLanguage.text("工作区内容", "Working Changes")))
                         .orbitFont(.caption, weight: .bold)
                         .foregroundStyle(OrbitDesign.primaryText)
                     HStack(spacing: 6) {
-                        Label("新增 \(diff.document.addedLineCount)", systemImage: "plus")
+                        Label("+\(diff.document.addedLineCount)", systemImage: "plus")
                             .foregroundStyle(OrbitDesign.accent)
-                        Label("移除 \(diff.document.removedLineCount)", systemImage: "minus")
+                        Label("-\(diff.document.removedLineCount)", systemImage: "minus")
                             .foregroundStyle(OrbitDesign.coral)
                     }
                     .font(.caption2.monospacedDigit().weight(.semibold))
@@ -251,22 +342,23 @@ struct OrbitDiffViewer: View {
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
                     Button { moveChange(by: -1) } label: { Image(systemName: "chevron.up") }
+                        .accessibilityLabel(AppLanguage.text("上一个修改区块", "Previous Change"))
                     Button { moveChange(by: 1) } label: { Image(systemName: "chevron.down") }
+                        .accessibilityLabel(AppLanguage.text("下一个修改区块", "Next Change"))
                 }
                 .buttonStyle(.plain)
                 .orbitFont(.caption2, weight: .bold)
                 .foregroundStyle(OrbitDesign.secondaryText)
                 .disabled(changeAnchors.isEmpty)
                 .help("上一个或下一个修改区块")
-                Text(AppLanguage.text("修改 \(changeAnchors.count)", "\(changeAnchors.count) changes"))
+                Text(AppLanguage.text("本页修改 \(changeAnchors.count)", "\(changeAnchors.count) changes on page"))
                     .font(.caption2.monospacedDigit().weight(.medium))
                     .foregroundStyle(changeAnchors.isEmpty ? OrbitDesign.tertiaryText : OrbitDesign.amber)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
                     .background(OrbitDesign.elevatedSurface, in: Capsule())
-                Text(displayLines.count == totalLineCount
-                     ? "\(totalLineCount) 行"
-                     : "\(displayLines.count) / \(totalLineCount) 行")
+                Text(AppLanguage.text("\(min(pageStart + 1, totalLineCount))–\(min(visibleLineLimit, totalLineCount)) / \(totalLineCount) 行",
+                                      "Lines \(min(pageStart + 1, totalLineCount))–\(min(visibleLineLimit, totalLineCount)) / \(totalLineCount)"))
                     .font(.caption2.monospacedDigit().weight(.medium))
                     .foregroundStyle(OrbitDesign.secondaryText)
                     .padding(.horizontal, 7)
@@ -298,17 +390,22 @@ struct OrbitDiffViewer: View {
                     TextField("搜索变更内容", text: $searchText)
                         .textFieldStyle(.plain)
                     if !searchText.isEmpty {
-                        Text("\(matchingLines.isEmpty ? 0 : selectedSearchIndex + 1)/\(matchingLines.count)")
+                        if isSearching { ProgressView().controlSize(.mini) }
+                        Text("\(searchResult.matches.isEmpty ? 0 : selectedSearchIndex + 1)/\(searchResult.total)")
                             .font(.caption2.monospacedDigit())
                             .foregroundStyle(OrbitDesign.secondaryText)
                         Button { moveSearch(by: -1) } label: {
                             Image(systemName: "chevron.up").font(.system(size: 9, weight: .bold))
                         }
-                        .buttonStyle(.plain).disabled(matchingLines.isEmpty).help("上一个匹配")
+                        .buttonStyle(.plain).disabled(searchResult.matches.isEmpty || isSearching)
+                        .help(AppLanguage.text("上一个匹配", "Previous Match"))
+                        .accessibilityLabel(AppLanguage.text("上一个匹配", "Previous Match"))
                         Button { moveSearch(by: 1) } label: {
                             Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold))
                         }
-                        .buttonStyle(.plain).disabled(matchingLines.isEmpty).help("下一个匹配")
+                        .buttonStyle(.plain).disabled(searchResult.matches.isEmpty || isSearching)
+                        .help(AppLanguage.text("下一个匹配", "Next Match"))
+                        .accessibilityLabel(AppLanguage.text("下一个匹配", "Next Match"))
                         Button {
                             searchText = ""
                         } label: {
@@ -407,15 +504,12 @@ struct OrbitDiffViewer: View {
     }
 
     private func moveSearch(by offset: Int) {
-        guard !matchingLines.isEmpty else { return }
-        selectedSearchIndex = (selectedSearchIndex + offset + matchingLines.count) % matchingLines.count
+        guard !searchResult.matches.isEmpty else { return }
+        selectedSearchIndex = (selectedSearchIndex + offset + searchResult.matches.count) % searchResult.matches.count
     }
 
     private func scrollToSelectedSearch(using proxy: ScrollViewProxy) {
-        guard matchingLines.indices.contains(selectedSearchIndex) else { return }
-        withAnimation(reduceMotion ? .easeOut(duration: 0.08) : .easeOut(duration: 0.18)) {
-            proxy.scrollTo(matchingLines[selectedSearchIndex].id, anchor: .center)
-        }
+        revealSearchMatch()
     }
 
     private func moveChange(by offset: Int) {
@@ -436,7 +530,7 @@ private enum DiffPresentationMode: String, CaseIterable, Identifiable {
     case sideBySide
     var id: Self { self }
     var symbol: String { self == .unified ? "rectangle.grid.1x2" : "rectangle.split.2x1" }
-    var accessibilityTitle: String { self == .unified ? "统一视图" : "并排视图" }
+    var accessibilityTitle: String { self == .unified ? AppLanguage.text("统一视图", "Unified") : AppLanguage.text("并排视图", "Side by Side") }
 }
 
 private enum DiffHistoryMode: String, Identifiable {
@@ -451,6 +545,7 @@ private struct DiffCodeLine: View {
     let searchText: String
     let showsInvisibleCharacters: Bool
     let pathExtension: String
+    let comparedWith: String?
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
@@ -489,6 +584,9 @@ private struct DiffCodeLine: View {
     private func highlightedText(_ value: String) -> Text {
         guard !searchText.isEmpty,
               let range = value.range(of: searchText, options: [.caseInsensitive, .diacriticInsensitive]) else {
+            if let comparedWith {
+                return InlineDifference.text(value, comparedWith: comparedWith, color: line.accent)
+            }
             return SyntaxLineHighlighter.text(value, pathExtension: pathExtension)
         }
         return Text(value[..<range.lowerBound])
@@ -538,24 +636,12 @@ private struct SplitDiffPair: Identifiable {
     let right: DiffDisplayLine?
 
     static func make(from lines: [DiffDisplayLine]) -> [SplitDiffPair] {
-        var result: [SplitDiffPair] = []
-        var pendingDeletion: DiffDisplayLine?
-        for line in lines {
-            switch line.kind {
-            case .deletion:
-                if let pendingDeletion { result.append(.init(id: result.count, left: pendingDeletion, right: nil)) }
-                pendingDeletion = line
-            case .addition:
-                result.append(.init(id: result.count, left: pendingDeletion, right: line))
-                pendingDeletion = nil
-            default:
-                if let pendingDeletion { result.append(.init(id: result.count, left: pendingDeletion, right: nil)) }
-                pendingDeletion = nil
-                result.append(.init(id: result.count, left: line, right: line))
-            }
+        let kinds: [Character] = lines.map { $0.kind == .deletion ? "-" : $0.kind == .addition ? "+" : " " }
+        return DiffTextTools.pairs(kinds: kinds).map { left, right in
+            let lhs = left.map { lines[$0] }
+            let rhs = right.map { lines[$0] }
+            return SplitDiffPair(id: lhs?.id ?? rhs!.id, left: lhs, right: rhs)
         }
-        if let pendingDeletion { result.append(.init(id: result.count, left: pendingDeletion, right: nil)) }
-        return result
     }
 }
 
@@ -603,24 +689,22 @@ private struct SplitDiffRow: View {
         if showsInvisibleCharacters {
             otherValue = otherValue.replacingOccurrences(of: "\t", with: "→   ").replacingOccurrences(of: " ", with: "·")
         }
-        guard let range = InlineDifference.changedRange(in: value, comparedWith: otherValue) else { return Text(value) }
         let color = isLeft ? OrbitDesign.coral : OrbitDesign.accent
-        return Text(value[..<range.lowerBound])
-            + Text(value[range]).bold().foregroundColor(color)
-            + Text(value[range.upperBound...])
+        return InlineDifference.text(value, comparedWith: otherValue, color: color)
     }
 }
 
 private enum InlineDifference {
-    static func changedRange(in value: String, comparedWith other: String) -> Range<String.Index>? {
-        let commonPrefix = zip(value, other).prefix { $0 == $1 }.count
-        let remainingValue = value.dropFirst(commonPrefix)
-        let remainingOther = other.dropFirst(commonPrefix)
-        let commonSuffix = zip(remainingValue.reversed(), remainingOther.reversed()).prefix { $0 == $1 }.count
-        guard remainingValue.count > commonSuffix else { return nil }
-        let lower = value.index(value.startIndex, offsetBy: commonPrefix)
-        let upper = value.index(value.endIndex, offsetBy: -commonSuffix)
-        return lower..<upper
+    static func text(_ value: String, comparedWith other: String, color: Color) -> Text {
+        let ranges = DiffTextTools.changedRanges(in: value, comparedWith: other)
+        guard !ranges.isEmpty else { return Text(value) }
+        var text = Text("")
+        var cursor = value.startIndex
+        for range in ranges {
+            text = text + Text(value[cursor..<range.lowerBound]) + Text(value[range]).bold().foregroundColor(color)
+            cursor = range.upperBound
+        }
+        return text + Text(value[cursor...])
     }
 }
 
@@ -688,6 +772,9 @@ private struct DiffDisplayLine: Identifiable {
         var result: [DiffDisplayLine] = []
 
         for (index, rawLine) in source.enumerated() {
+            let rawLine = rawLine.utf8.count > 16_384
+                ? String(decoding: rawLine.utf8.prefix(16_384), as: UTF8.self) + " …"
+                : rawLine
             let absoluteIndex = baseIndex + index
             if rawLine.hasPrefix("@@") {
                 let rangeParts = rawLine.split(separator: " ")
@@ -702,7 +789,7 @@ private struct DiffDisplayLine: Identifiable {
             } else if rawLine.hasPrefix("-") && !rawLine.hasPrefix("---") {
                 result.append(DiffDisplayLine(id: absoluteIndex, oldNumber: oldLine, newNumber: nil, marker: "−", content: String(rawLine.dropFirst()), kind: .deletion))
                 oldLine = oldLine.map { $0 + 1 }
-            } else if rawLine.hasPrefix("diff ") || rawLine.hasPrefix("index ") || rawLine.hasPrefix("---") || rawLine.hasPrefix("+++") {
+            } else if rawLine.hasPrefix("diff ") || rawLine.hasPrefix("index ") || rawLine.hasPrefix("---") || rawLine.hasPrefix("+++") || rawLine.hasPrefix("\\") {
                 result.append(DiffDisplayLine(id: absoluteIndex, oldNumber: nil, newNumber: nil, marker: "", content: rawLine, kind: .metadata))
             } else {
                 let content = rawLine.hasPrefix(" ") ? String(rawLine.dropFirst()) : rawLine

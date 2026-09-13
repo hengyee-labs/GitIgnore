@@ -33,6 +33,13 @@ extension AppState {
         }
     }
 
+    func pushTag(_ name: String) async {
+        guard let root = repositoryRootURL else { return }
+        await performAction(successMessage: "标签 (name) 已推送", refreshScope: .remote) {
+            try await self.gitRunner.pushTag(name, at: root)
+        }
+    }
+
     func merge(_ branch: GitBranchSummary) async {
         guard !branch.isCurrent else { return }
         await prepareSafeOperation(kind: .merge, target: branch.name)

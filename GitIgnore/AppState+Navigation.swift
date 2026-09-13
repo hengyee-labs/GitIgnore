@@ -12,12 +12,8 @@ extension AppState {
         panel.allowsMultipleSelection = false
         panel.resolvesAliases = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        appStateSaveBookmark(url)
-        beginOpeningRepository(url)
-    }
-
-    private func appStateSaveBookmark(_ url: URL) {
         saveRepositoryBookmark(for: url)
+        beginOpeningRepository(url)
     }
 
     func openRecentRepository(_ recent: RecentRepository) {

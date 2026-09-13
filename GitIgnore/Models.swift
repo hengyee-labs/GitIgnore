@@ -130,6 +130,7 @@ struct GitFileStatus: Identifiable, Hashable, Sendable {
 }
 
 struct GitFileDiff: Sendable {
+    let revision = UUID()
     let path: String
     let text: String
     let isStaged: Bool
@@ -283,6 +284,8 @@ struct GitCommitSummary: Identifiable, Hashable, Sendable {
 struct GitCommitFileChange: Identifiable, Hashable, Sendable {
     let path: String
     let kind: GitFileChangeKind
+    var addedLines: Int? = nil
+    var removedLines: Int? = nil
 
     var id: String { path }
 }

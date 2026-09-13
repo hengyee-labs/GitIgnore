@@ -61,6 +61,8 @@ final class GitIgnoreAppDelegate: NSObject, NSApplicationDelegate, @preconcurren
     private func configureMainWindow(_ window: NSWindow) {
         window.identifier = NSUserInterfaceItemIdentifier("GitIgnore.main-window")
         window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("GitIgnore.MainWindow")
+        window.minSize = NSSize(width: 860, height: 640)
     }
 }
 

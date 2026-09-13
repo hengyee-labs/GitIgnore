@@ -45,6 +45,14 @@ struct CommitComposerView: View {
             && !appState.isPerformingGitAction
     }
 
+    private var conventionHint: String? {
+        let value = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return nil }
+        if value.count > 72 { return AppLanguage.text("建议将摘要控制在 72 个字符以内", "Keep the summary within 72 characters") }
+        if value.contains("\n") { return AppLanguage.text("摘要不应包含换行", "Summary should stay on one line") }
+        return nil
+    }
+
     var body: some View {
         ZStack {
             if stagedCount == 0 && !amend && !forceExpanded {
@@ -176,6 +184,14 @@ struct CommitComposerView: View {
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(summary.isEmpty ? OrbitDesign.separator : OrbitDesign.accent.opacity(0.45), lineWidth: 1)
                 }
+
+            if let conventionHint {
+                Label(conventionHint, systemImage: "info.circle")
+                    .orbitFont(.caption2)
+                    .foregroundStyle(OrbitDesign.amber)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+            }
 
             if showsBody {
                 VStack(spacing: 8) {

@@ -20,6 +20,7 @@ struct SettingsView: View {
     @AppStorage("orbit.sidebarFooter.maxLines") private var footerMaxLines = 2
     @AppStorage(RemoteCheckPreferences.notificationsKey) private var remoteNotificationsEnabled = true
     @AppStorage(RemoteCheckPreferences.timeoutKey) private var remoteTimeoutSeconds = RemoteCheckPreferences.defaultTimeout
+    @AppStorage("orbit.commit.template") private var commitTemplate = ""
     @AppStorage("orbit.settings.selectedPane") private var selectedPane: SettingsPane = .profile
     @State private var notificationPermission: NotificationPermissionState = .notRequested
     @State private var isRequestingNotificationPermission = false
@@ -536,6 +537,18 @@ struct SettingsView: View {
                 showsPerformanceDiagnostics = true
             }
             .buttonStyle(.borderedProminent)
+
+            Text(AppLanguage.text("默认提交模板", "Default commit template"))
+                .orbitFont(.caption, weight: .semibold)
+            TextEditor(text: $commitTemplate)
+                .font(.system(.caption, design: .monospaced))
+                .frame(minHeight: 80, maxHeight: 120)
+                .padding(6)
+                .background(OrbitDesign.recessedSurface, in: RoundedRectangle(cornerRadius: 8))
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(OrbitDesign.separator, lineWidth: 1) }
+            Text(AppLanguage.text("保存后会作为提交编辑器的默认正文模板。", "Used as the default commit body template."))
+                .orbitFont(.caption2)
+                .foregroundStyle(OrbitDesign.secondaryText)
         }
     }
 

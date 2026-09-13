@@ -33,7 +33,7 @@
 
 GitIgnore 是面向 macOS 的原生 Git 客户端。它把工作区、提交历史、分支、远程状态和 Diff 放在一个稳定的三栏工作流中，同时保留原生 macOS 的键盘操作、深色模式、辅助功能和性能表现。
 
-当前版本为 `v1.0.0`，欢迎试用和反馈。GitIgnore 目前提供未签名的 macOS Universal 构建。
+当前版本为 `v1.0.1`，欢迎试用和反馈。GitIgnore 目前提供未签名的 macOS Universal 构建。
 
 ### 功能
 
@@ -102,7 +102,7 @@ zsh Tools/performance-regression.sh --scenario all --report /tmp/gitignore-perfo
 
 GitIgnore is a native macOS Git client for understanding repository state, commit history, branches, remotes, and diffs in one calm three-column workflow. It supports native macOS keyboard interaction, appearance modes, accessibility, and performance-conscious loading.
 
-The current release is `v1.0.0`. Feedback and contributions are welcome. GitIgnore currently provides unsigned universal macOS builds.
+The current release is `v1.0.1`. Feedback and contributions are welcome. GitIgnore currently provides unsigned universal macOS builds.
 
 ### Features
 

@@ -37,6 +37,13 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             build
 
+      - name: Test repository access, history queries and diff algorithms
+        run: |
+          swiftc -O -swift-version 6 GitIgnore/Core/Git/RepositoryAccessStore.swift Tools/repository-access-tests.swift -o "$RUNNER_TEMP/access-tests"
+          "$RUNNER_TEMP/access-tests"
+          swiftc -O -swift-version 6 GitIgnore/Core/Git/GitHistoryQuery.swift GitIgnore/Core/Git/DiffTextTools.swift Tools/history-diff-tests.swift -o "$RUNNER_TEMP/history-diff-tests"
+          "$RUNNER_TEMP/history-diff-tests"
+
       - name: Verify Universal binary
         run: |
           file "$RUNNER_TEMP/GitIgnoreDerivedData/Build/Products/Release/GitIgnore.app/Contents/MacOS/GitIgnore"

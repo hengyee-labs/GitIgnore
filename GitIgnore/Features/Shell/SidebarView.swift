@@ -142,6 +142,10 @@ struct SidebarView: View {
             }
             if let repository = appState.repository {
                 Divider()
+                Button(AppLanguage.text("授权项目父目录…", "Authorize Projects Folder…"), systemImage: "folder.badge.person.crop") {
+                    appState.authorizeRepositoryParent()
+                }
+                .disabled(appState.isPerformingGitAction || appState.isLoadingRepository)
                 Button("在 Finder 中显示", systemImage: "folder") {
                     NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: repository.path)
                 }

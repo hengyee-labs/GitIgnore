@@ -434,7 +434,9 @@ struct OverviewView: View {
             if repository.needsPublish {
                 return AppLanguage.text("当前分支尚未发布", "Branch not published")
             }
-            return AppLanguage.text("可 Pull \(repository.behindCount) · 未 Push \(repository.aheadCount)", "Pull \(repository.behindCount) · Push \(repository.aheadCount)")
+            let upstream = appState.branches.first(where: \.isCurrent)?.upstream
+            let tracking = upstream.map { AppLanguage.text(" · 跟踪 \($0)", " · Tracking \($0)") } ?? ""
+            return AppLanguage.text("可 Pull \(repository.behindCount) · 未 Push \(repository.aheadCount)\(tracking)", "Pull \(repository.behindCount) · Push \(repository.aheadCount)\(tracking)")
         }
     }
 
@@ -444,7 +446,9 @@ struct OverviewView: View {
         }
         if repository.needsPublish { return AppLanguage.text("当前分支尚未发布", "Branch not published") }
         if repository.behindCount == 0, repository.aheadCount == 0 { return AppLanguage.text("本地与远程已同步", "Local and remote are synced") }
-        return AppLanguage.text("Pull \(repository.behindCount) · Push \(repository.aheadCount)", "Pull \(repository.behindCount) · Push \(repository.aheadCount)")
+        let upstream = appState.branches.first(where: \.isCurrent)?.upstream
+        let tracking = upstream.map { AppLanguage.text(" · 跟踪 \($0)", " · Tracking \($0)") } ?? ""
+        return AppLanguage.text("Pull \(repository.behindCount) · Push \(repository.aheadCount)\(tracking)", "Pull \(repository.behindCount) · Push \(repository.aheadCount)\(tracking)")
     }
 
     private var lastFetchText: String {

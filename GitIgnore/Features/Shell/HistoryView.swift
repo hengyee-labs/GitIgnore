@@ -8,11 +8,22 @@ private struct HistoryGraphLoadID: Hashable {
 struct HistoryView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.orbitFontPalette) private var fontPalette
     @State private var query = ""
     @State private var confirmsUndo = false
     @State private var localGraphNodes: [String: GitGraphNode] = [:]
     @State private var incomingGraphNodes: [String: GitGraphNode] = [:]
-    @State private var currentBranchCommitIDs: Set<String> = []
+    @State private var author = ""
+    @State private var branchFilter = ""
+    @State private var days = 0
+    @State private var kind = "all"
+    @State private var historyResults: [GitCommitSummary] = []
+    @State private var isLoadingHistory = false
+    @State private var hasMoreHistory = true
+    @State private var historyError: String?
+    @State private var historyGeneration = UUID()
+    @State private var retryID = UUID()
+    @State private var historyLimitReached = false
     @AppStorage("gitignore.history.graphMode") private var graphModeRawValue = HistoryGraphMode.clear.rawValue
     @AppStorage("gitignore.history.scope") private var historyScopeRawValue = HistoryScope.all.rawValue
 
@@ -25,43 +36,53 @@ struct HistoryView: View {
     }
 
     private var filteredCommits: [GitCommitSummary] {
-        let source: [GitCommitSummary]
-        switch historyScope {
-        case .all: source = appState.commits
-        case .incoming: source = []
-        case .current:
-            let current = appState.repository?.branch ?? ""
-            source = appState.commits.filter { commit in
-                if !currentBranchCommitIDs.isEmpty { return currentBranchCommitIDs.contains(commit.hash) }
-                return commit.refs.contains { reference in
-                    let normalized = reference.replacingOccurrences(of: "HEAD -> ", with: "")
-                    return normalized == current || normalized.hasSuffix("/\(current)")
-                }
-            }
-        }
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedQuery.isEmpty else { return source }
-        return source.filter {
-            $0.subject.localizedCaseInsensitiveContains(normalizedQuery)
-                || $0.author.localizedCaseInsensitiveContains(normalizedQuery)
-                || $0.shortHash.localizedCaseInsensitiveContains(normalizedQuery)
-        }
+        historyScope == .incoming && branchFilter.isEmpty ? [] : historyResults
     }
 
     private var filteredIncomingCommits: [GitCommitSummary] {
-        guard historyScope != .current else { return [] }
-        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalizedQuery.isEmpty else { return appState.incomingCommits }
-        return appState.incomingCommits.filter {
-            $0.subject.localizedCaseInsensitiveContains(normalizedQuery)
-                || $0.author.localizedCaseInsensitiveContains(normalizedQuery)
-                || $0.shortHash.localizedCaseInsensitiveContains(normalizedQuery)
-        }
+        historyScope == .incoming && branchFilter.isEmpty ? historyResults : []
+    }
+
+    private var historyQuery: GitHistoryQuery {
+        GitHistoryQuery(scope: historyScopeRawValue, branch: branchFilter,
+                        author: author.trimmingCharacters(in: .whitespacesAndNewlines),
+                        text: query.trimmingCharacters(in: .whitespacesAndNewlines), days: days, kind: kind)
+    }
+
+    private var requestID: String {
+        "\(appState.repository?.path ?? "")|\(appState.repository?.branch ?? "")|\(appState.commits.first?.hash ?? "")|\(appState.incomingCommits.first?.hash ?? "")|\(historyQuery)|\(retryID)"
     }
 
     var body: some View {
+        GeometryReader { viewport in
         VStack(spacing: 0) {
             header
+            filterBar(width: viewport.size.width)
+            if (appState.repository?.behindCount ?? 0) > 0, historyScope != .incoming {
+                HStack {
+                    Label(AppLanguage.text("\(appState.repository?.behindCount ?? 0) 个远程提交待 Pull", "\(appState.repository?.behindCount ?? 0) incoming commits"), systemImage: "arrow.down.to.line")
+                    Spacer()
+                    Button(AppLanguage.text("预览远程更新", "Preview Incoming")) {
+                        branchFilter = ""
+                        historyScopeRawValue = HistoryScope.incoming.rawValue
+                    }
+                }
+                .orbitFont(.caption)
+                .foregroundStyle(OrbitDesign.amber)
+                .padding(.horizontal, 24).padding(.vertical, 8)
+            }
+
+            if let historyError {
+                HStack {
+                    Label(historyError, systemImage: "exclamationmark.circle")
+                        .lineLimit(3)
+                    Spacer()
+                    Button(AppLanguage.text("重试", "Retry")) { retryID = UUID() }
+                }
+                .orbitFont(.caption)
+                .padding(12)
+                .foregroundStyle(OrbitDesign.coral)
+            }
 
             if let updateMessage = appState.historyUpdateMessage {
                 historyUpdateBanner(updateMessage)
@@ -74,8 +95,9 @@ struct HistoryView: View {
 
             if appState.repository == nil {
                 emptyState
-            } else if appState.commits.isEmpty && appState.incomingCommits.isEmpty {
-                unavailableState
+            } else if isLoadingHistory && historyResults.isEmpty {
+                ProgressView(AppLanguage.text("正在筛选提交…", "Filtering commits…"))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if filteredCommits.isEmpty && filteredIncomingCommits.isEmpty {
                 noResults
             } else {
@@ -97,11 +119,21 @@ struct HistoryView: View {
                                 commitRow(commit)
                                     .id(commit.id)
                                     .task {
-                                        guard query.isEmpty, commit.id == appState.commits.last?.id else { return }
-                                        await appState.loadMoreCommits()
+                                        guard commit.id == historyResults.last?.id else { return }
+                                        await loadHistoryPage()
                                     }
                             }
-                            if appState.isLoadingMoreCommits {
+                            if hasMoreHistory {
+                                Button(AppLanguage.text("加载更多提交", "Load More Commits")) {
+                                    Task { await loadHistoryPage() }
+                                }
+                                .disabled(isLoadingHistory)
+                            }
+                            if historyLimitReached {
+                                Text(AppLanguage.text("已达本次阅读上限，请缩小时间、分支或作者范围。", "Reading limit reached. Narrow the date, branch, or author filters."))
+                                    .orbitFont(.caption).foregroundStyle(OrbitDesign.secondaryText)
+                            }
+                            if isLoadingHistory {
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
                                     Text("正在读取更早的提交…")
@@ -113,8 +145,8 @@ struct HistoryView: View {
                                 .transition(.opacity)
                             }
                         }
+                        .frame(width: max(0, viewport.size.width - 48), alignment: .leading)
                         .padding(24)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
                     .scrollContentBackground(.hidden)
                     .onChange(of: appState.recentlyAddedCommitIDs) { _, newIDs in
@@ -132,6 +164,8 @@ struct HistoryView: View {
                 }
             }
         }
+        .frame(width: viewport.size.width, height: viewport.size.height, alignment: .topLeading)
+        }
         .background(OrbitDesign.canvas)
         .navigationTitle("提交历史")
         .orbitPageReveal()
@@ -141,30 +175,142 @@ struct HistoryView: View {
         } message: {
             Text("提交内容会保留在暂存区，可继续修改后重新提交。")
         }
-        .task(id: HistoryGraphLoadID(mode: graphModeRawValue, commitIDs: appState.commits.map(\.id))) {
+        .task(id: HistoryGraphLoadID(mode: graphModeRawValue, commitIDs: filteredCommits.map(\.id))) {
             guard graphMode == .full else {
                 localGraphNodes.removeAll(keepingCapacity: false)
                 return
             }
-            let commits = appState.commits
-            localGraphNodes = await Task.detached(priority: .utility) {
+            let commits = filteredCommits
+            let nodes = await Task.detached(priority: .utility) {
                 GitGraphLayout.build(commits: commits)
             }.value
+            guard !Task.isCancelled else { return }
+            localGraphNodes = nodes
         }
-        .task(id: HistoryGraphLoadID(mode: graphModeRawValue, commitIDs: appState.incomingCommits.map(\.id))) {
+        .task(id: HistoryGraphLoadID(mode: graphModeRawValue, commitIDs: filteredIncomingCommits.map(\.id))) {
             guard graphMode == .full else {
                 incomingGraphNodes.removeAll(keepingCapacity: false)
                 return
             }
-            let commits = appState.incomingCommits
-            incomingGraphNodes = await Task.detached(priority: .utility) {
+            let commits = filteredIncomingCommits
+            let nodes = await Task.detached(priority: .utility) {
                 GitGraphLayout.build(commits: commits)
             }.value
+            guard !Task.isCancelled else { return }
+            incomingGraphNodes = nodes
         }
-        .task(id: "branch-ancestry-\(appState.repository?.path ?? "")-\(appState.repository?.branch ?? "")") {
-            guard historyScope == .current, let repository = appState.repository else { return }
-            currentBranchCommitIDs = (try? await appState.gitRunner.currentBranchCommitIDs(at: URL(fileURLWithPath: repository.path, isDirectory: true))) ?? []
+        .task(id: requestID) {
+            historyGeneration = UUID()
+            let canReuseRepositoryHistory = historyScope == .all
+                && branchFilter.isEmpty
+                && author.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && days == 0
+                && kind == "all"
+            historyResults = canReuseRepositoryHistory ? appState.commits : []
+            hasMoreHistory = true
+            historyLimitReached = false
+            isLoadingHistory = false
+            historyError = nil
+            if canReuseRepositoryHistory {
+                hasMoreHistory = appState.hasMoreCommits
+                return
+            }
+            do { try await Task.sleep(for: .milliseconds(180)) } catch { return }
+            await loadHistoryPage()
         }
+        .onDisappear { historyGeneration = UUID() }
+        .onChange(of: appState.repository?.path) { _, _ in branchFilter = "" }
+    }
+
+    private func loadHistoryPage() async {
+        guard !isLoadingHistory, hasMoreHistory, let repository = appState.repository else { return }
+        let canUseRepositoryPagination = historyScope == .all
+            && branchFilter.isEmpty
+            && author.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && days == 0
+            && kind == "all"
+        if canUseRepositoryPagination {
+            await appState.loadMoreCommits()
+            historyResults = appState.commits
+            hasMoreHistory = appState.hasMoreCommits
+            return
+        }
+        let generation = historyGeneration
+        let request = requestID
+        let filter = historyQuery
+        let offset = historyResults.count
+        isLoadingHistory = true
+        defer { if generation == historyGeneration { isLoadingHistory = false } }
+        do {
+            let page = try await appState.gitRunner.historyPage(
+                at: URL(fileURLWithPath: repository.path), query: filter, skip: offset)
+            try Task.checkCancellation()
+            guard generation == historyGeneration, request == requestID else { return }
+            let existing = Set(historyResults.map(\.id))
+            historyResults.append(contentsOf: page.filter { !existing.contains($0.id) })
+            let bytes = historyResults.reduce(0) { $0 + $1.subject.utf8.count + $1.author.utf8.count + 256 }
+            historyLimitReached = historyResults.count >= 10_000 || bytes >= 8 * 1_024 * 1_024
+            hasMoreHistory = page.count == 100 && !historyLimitReached
+            historyError = nil
+        } catch is CancellationError {
+        } catch {
+            guard generation == historyGeneration, request == requestID else { return }
+            historyError = error.localizedDescription
+        }
+    }
+
+    private func filterBar(width: CGFloat) -> some View {
+        let layout = width >= 1000
+            ? AnyLayout(HStackLayout(spacing: 12))
+            : AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        return layout {
+            HStack(spacing: 12) { scopeFilters }
+            HStack(spacing: 12) { detailFilters }
+        }
+        .controlSize(.small)
+        .orbitFont(.caption)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background(OrbitDesign.surface)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    @ViewBuilder private var scopeFilters: some View {
+        Picker(AppLanguage.text("范围", "Scope"), selection: $historyScopeRawValue) {
+            ForEach(HistoryScope.allCases, id: \.rawValue) { Text($0.title).tag($0.rawValue) }
+        }
+        .onChange(of: historyScopeRawValue) { _, _ in branchFilter = "" }
+        Picker(AppLanguage.text("分支", "Branch"), selection: $branchFilter) {
+            Text(AppLanguage.text("跟随范围", "Use Scope")).tag("")
+            ForEach(appState.branches) { Text($0.name).tag("refs/heads/\($0.name)") }
+            ForEach(appState.remoteBranches) { Text($0.id).tag("refs/remotes/\($0.id)") }
+        }
+        .frame(maxWidth: 260)
+    }
+
+    @ViewBuilder private var detailFilters: some View {
+        TextField(AppLanguage.text("作者或邮箱", "Author or email"), text: $author)
+            .textFieldStyle(.roundedBorder).frame(minWidth: 100, maxWidth: 180)
+            .accessibilityLabel(AppLanguage.text("筛选作者", "Filter by Author"))
+        Picker(AppLanguage.text("时间", "Date"), selection: $days) {
+            Text(AppLanguage.text("全部", "Any Time")).tag(0)
+            Text(AppLanguage.text("最近 7 天", "Last 7 Days")).tag(7)
+            Text(AppLanguage.text("最近 30 天", "Last 30 Days")).tag(30)
+            Text(AppLanguage.text("最近 90 天", "Last 90 Days")).tag(90)
+        }
+        Picker(AppLanguage.text("类型", "Type"), selection: $kind) {
+            Text(AppLanguage.text("全部", "All")).tag("all")
+            Text(AppLanguage.text("合并提交", "Merges")).tag("merge")
+            Text(AppLanguage.text("普通提交", "Non-Merges")).tag("commit")
+        }
+        Button {
+            query = ""; author = ""; branchFilter = ""; days = 0; kind = "all"
+            historyScopeRawValue = HistoryScope.all.rawValue
+        } label: { Image(systemName: "arrow.counterclockwise") }
+        .help(AppLanguage.text("重置筛选", "Reset Filters"))
+        .accessibilityLabel(AppLanguage.text("重置筛选", "Reset Filters"))
     }
 
     private func historyUpdateBanner(_ message: String) -> some View {
@@ -209,7 +355,7 @@ struct HistoryView: View {
         } accessory: {
             HStack(spacing: 8) {
                 OrbitSearchField(
-                    prompt: AppLanguage.text("搜索提交、作者或哈希…", "Search commits, authors, or hashes…"),
+                    prompt: AppLanguage.text("搜索提交说明…", "Search commit messages…"),
                     text: $query
                 )
                 Text("⌘F")
@@ -271,64 +417,23 @@ struct HistoryView: View {
 
     private var historyGuide: some View {
         HStack(spacing: 14) {
-            Label(AppLanguage.text("从新到旧", "Newest to oldest"), systemImage: "arrow.down")
-            Rectangle()
-                .fill(OrbitDesign.separator)
-                .frame(width: 1, height: 16)
-            if graphMode == .clear {
-                Label(
-                    AppLanguage.text("仅显示直接提交关系", "Direct commit relationships"),
-                    systemImage: "point.3.connected.trianglepath.dotted"
-                )
-                graphLegendItem(title: AppLanguage.text("合并时显示分叉", "Branches appear for merges"), isMerge: true)
-            } else {
-                HStack(spacing: 6) {
-                    HStack(spacing: 3) {
-                        Capsule().fill(OrbitDesign.violet).frame(width: 2, height: 14)
-                        Capsule().fill(OrbitDesign.blue).frame(width: 2, height: 14)
-                        Capsule().fill(OrbitDesign.accent).frame(width: 2, height: 14)
-                    }
-                    Text(AppLanguage.text("显示所有活跃分支路径", "All active branch paths"))
-                }
-            }
-            Spacer(minLength: 12)
             Text(AppLanguage.text(
                 "当前显示 \(filteredCommits.count + filteredIncomingCommits.count) 条",
                 "Showing \(filteredCommits.count + filteredIncomingCommits.count) commits"
             ))
                 .foregroundStyle(OrbitDesign.tertiaryText)
-            Picker(
-                AppLanguage.text("图谱显示方式", "Graph display mode"),
-                selection: $graphModeRawValue
-            ) {
-                Text(AppLanguage.text("清晰", "Clear"))
-                    .tag(HistoryGraphMode.clear.rawValue)
-                Text(AppLanguage.text("完整图谱", "Full Graph"))
-                    .tag(HistoryGraphMode.full.rawValue)
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .frame(width: 154)
-            .help(AppLanguage.text(
-                "清晰模式适合日常阅读；完整图谱用于查看复杂分支拓扑",
-                "Use Clear for everyday reading and Full Graph for complex topology"
-            ))
-            Picker(AppLanguage.text("历史范围", "History scope"), selection: $historyScopeRawValue) {
-                ForEach(HistoryScope.allCases, id: \.rawValue) { scope in
-                    Text(scope.title).tag(scope.rawValue)
-                }
-            }
-            .pickerStyle(.menu)
-            .controlSize(.small)
-            .frame(width: 118)
-            .help(AppLanguage.text("按分支范围筛选提交，不会重新读取仓库", "Filter commits by branch scope without reloading the repository"))
+            Spacer(minLength: 8)
+            Text(AppLanguage.text("按时间排列 · 分支与合并关系显示在标签中", "Chronological order · branch and merge context shown in labels"))
+                .orbitFont(.caption2)
+                .foregroundStyle(OrbitDesign.tertiaryText)
+                .lineLimit(1)
         }
         .orbitFont(.caption2, weight: .medium)
         .foregroundStyle(OrbitDesign.secondaryText)
         .padding(.horizontal, 11)
         .frame(minHeight: 34)
         .background(OrbitDesign.recessedSurface, in: RoundedRectangle(cornerRadius: 8))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
     }
 
     private func graphLegendItem(title: String, isMerge: Bool) -> some View {
@@ -353,93 +458,38 @@ struct HistoryView: View {
         let isSelected = appState.selectedCommit?.id == commit.id
         let isNew = appState.recentlyAddedCommitIDs.contains(commit.id)
         let presentation = commitPresentation(commit)
+        let currentBranch = appState.repository?.branch ?? ""
+        let branchLabel = commitBranchLabel(commit, fallback: currentBranch)
+        let isHead = commit.refs.contains { ref in
+            let normalized = ref.replacingOccurrences(of: "HEAD -> ", with: "")
+            return normalized == currentBranch || normalized.hasSuffix("/\(currentBranch)")
+        }
         return HStack(spacing: 4) {
-            Button {
+            HistoryCommitRow(
+                commit: commit,
+                presentation: presentation,
+                graphMode: graphMode,
+                graphNode: (isIncoming ? incomingGraphNodes : localGraphNodes)[commit.id] ?? .fallback,
+                isSelected: isSelected,
+                isNew: isNew,
+                isIncoming: isIncoming,
+                isHead: isHead,
+                branchLabel: branchLabel,
+                isLast: !isIncoming && commit.id == appState.commits.last?.id && !appState.hasMoreCommits,
+                reduceMotion: reduceMotion
+            ) {
                 if isSelected {
                     appState.dismissInspector()
                 } else {
                     Task { await appState.selectCommit(commit) }
                 }
-            } label: {
-                HStack(alignment: .center, spacing: 12) {
-                    HistoryGraphView(
-                        node: (isIncoming ? incomingGraphNodes : localGraphNodes)[commit.id] ?? .fallback,
-                        mode: graphMode,
-                        parentCount: commit.parents.count,
-                        isSelected: isSelected,
-                        isLast: !isIncoming && commit.id == appState.commits.last?.id && !appState.hasMoreCommits
-                    )
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack(spacing: 6) {
-                            Label(presentation.eventTitle, systemImage: presentation.symbol)
-                                .orbitFont(.caption2, weight: .bold)
-                                .foregroundStyle(presentation.tint)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(presentation.tint.opacity(0.10), in: Capsule())
-
-                            if let scope = presentation.scope {
-                                Text(scope)
-                                    .font(.caption2.monospaced().weight(.semibold))
-                                    .foregroundStyle(OrbitDesign.secondaryText)
-                            }
-
-                            ForEach(Array(commit.refs.prefix(2)), id: \.self) { ref in
-                                referenceBadge(ref)
-                            }
-                            if commit.refs.count > 2 {
-                                Text("+\(commit.refs.count - 2)")
-                                    .orbitFont(.caption2, weight: .semibold)
-                                    .foregroundStyle(OrbitDesign.tertiaryText)
-                            }
-
-                            Spacer(minLength: 6)
-                            if isIncoming {
-                                Label(AppLanguage.text("待 Pull", "Ready to Pull"), systemImage: "arrow.down.circle.fill")
-                                    .orbitFont(.caption2, weight: .bold)
-                                    .foregroundStyle(OrbitDesign.amber)
-                            }
-                        }
-
-                        Text(presentation.title)
-                            .orbitFont(.callout, weight: .semibold)
-                            .foregroundStyle(OrbitDesign.primaryText)
-                            .lineLimit(1)
-                            .layoutPriority(1)
-
-                        HStack(spacing: 8) {
-                            CommitAuthorAvatarView(author: commit.author, size: 18)
-                            Text(commit.author)
-                            Text("·")
-                            Text(commit.dateText)
-                            Text("·")
-                            Text(commit.shortHash)
-                                .font(.caption2.monospaced())
-                            let currentBranch = appState.repository?.branch ?? ""
-                            if commit.refs.contains(where: { ref in
-                                let normalized = ref.replacingOccurrences(of: "HEAD -> ", with: "")
-                                return normalized == currentBranch || normalized.hasSuffix("/\(currentBranch)")
-                            }) {
-                                Text(AppLanguage.text("当前", "HEAD"))
-                                    .orbitFont(.caption2, weight: .bold)
-                                    .foregroundStyle(OrbitDesign.accent)
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2)
-                                    .background(OrbitDesign.accent.opacity(0.10), in: Capsule())
-                            }
-                        }
-                        .orbitFont(.caption2)
-                        .foregroundStyle(OrbitDesign.secondaryText)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .buttonStyle(HistoryCommitButtonStyle())
-            .accessibilityLabel("\(presentation.eventTitle)：\(presentation.title)，\(commit.author)，\(commit.dateText)")
+            .equatable()
             CommitActionMenu(commit: commit)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
+        .frame(height: max(88, fontPalette.baseSize * 4 + 36))
         .background(isSelected
                     ? OrbitDesign.selectionFill
                     : (isIncoming
@@ -466,6 +516,12 @@ struct HistoryView: View {
         }
         .animation(reduceMotion ? .easeOut(duration: 0.1) : .easeOut(duration: 0.3), value: isNew)
         .animation(reduceMotion ? .easeOut(duration: 0.08) : .easeOut(duration: 0.18), value: isSelected)
+    }
+
+    private func commitBranchLabel(_ commit: GitCommitSummary, fallback: String) -> String {
+        let ref = commit.refs.first { !$0.contains("origin/") && !$0.contains("upstream/") }
+        return ref?.replacingOccurrences(of: "HEAD -> ", with: "")
+            .replacingOccurrences(of: "tag: ", with: "") ?? fallback
     }
 
     private func referenceBadge(_ reference: String) -> some View {
@@ -599,7 +655,7 @@ struct HistoryView: View {
                 .font(.system(size: 30, weight: .light))
                 .foregroundStyle(OrbitDesign.secondaryText)
             Text("没有匹配的提交").orbitFont(.headline)
-            Text("试试提交信息、作者名或短哈希。")
+            Text(AppLanguage.text("可清空关键词或调整作者、时间和分支条件。", "Clear the search or adjust the author, date, and branch filters."))
                 .orbitFont(.caption)
                 .foregroundStyle(OrbitDesign.secondaryText)
         }
@@ -622,7 +678,208 @@ struct HistoryView: View {
     }
 }
 
-private struct HistoryCommitPresentation {
+@MainActor
+private struct HistoryCommitRow: View, Equatable {
+    let commit: GitCommitSummary
+    let presentation: HistoryCommitPresentation
+    let graphMode: HistoryGraphMode
+    let graphNode: GitGraphNode
+    let isSelected: Bool
+    let isNew: Bool
+    let isIncoming: Bool
+    let isHead: Bool
+    let branchLabel: String
+    let isLast: Bool
+    let reduceMotion: Bool
+    let onSelect: () -> Void
+
+    nonisolated static func == (lhs: HistoryCommitRow, rhs: HistoryCommitRow) -> Bool {
+        lhs.commit == rhs.commit
+            && lhs.presentation == rhs.presentation
+            && lhs.graphMode == rhs.graphMode
+            && lhs.graphNode == rhs.graphNode
+            && lhs.isSelected == rhs.isSelected
+            && lhs.isNew == rhs.isNew
+            && lhs.isIncoming == rhs.isIncoming
+            && lhs.isHead == rhs.isHead
+            && lhs.branchLabel == rhs.branchLabel
+            && lhs.isLast == rhs.isLast
+            && lhs.reduceMotion == rhs.reduceMotion
+    }
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(alignment: .center, spacing: 12) {
+                CommitAuthorAvatarView(author: commit.author, size: 34)
+                    .overlay(Circle().stroke(isSelected ? OrbitDesign.violet : OrbitDesign.separator, lineWidth: 2))
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 6) {
+                        Label(presentation.eventTitle, systemImage: presentation.symbol)
+                            .orbitFont(.caption2, weight: .bold)
+                            .foregroundStyle(presentation.tint)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(presentation.tint.opacity(0.10), in: Capsule())
+
+                        if let scope = presentation.scope {
+                            Text(scope)
+                                .font(.caption2.monospaced().weight(.semibold))
+                                .foregroundStyle(OrbitDesign.secondaryText)
+                        }
+
+                        if !branchLabel.isEmpty {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.triangle.branch")
+                                Text(branchLabel).lineLimit(1)
+                            }
+                            .font(.system(size: 10, weight: .semibold, design: .rounded))
+                            .foregroundStyle(OrbitDesign.blue)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(OrbitDesign.blue.opacity(0.10), in: Capsule())
+                        }
+
+                        ForEach(Array(commit.refs.prefix(2)), id: \.self) { ref in
+                            referenceBadge(ref)
+                        }
+                        if commit.refs.count > 2 {
+                            Text("+\(commit.refs.count - 2)")
+                                .orbitFont(.caption2, weight: .semibold)
+                                .foregroundStyle(OrbitDesign.tertiaryText)
+                        }
+
+                        Spacer(minLength: 6)
+                        if isIncoming {
+                            Label(AppLanguage.text("待 Pull", "Ready to Pull"), systemImage: "arrow.down.circle.fill")
+                                .orbitFont(.caption2, weight: .bold)
+                                .foregroundStyle(OrbitDesign.amber)
+                        }
+                    }
+
+                    Text(presentation.title)
+                        .orbitFont(.callout, weight: .semibold)
+                        .foregroundStyle(OrbitDesign.primaryText)
+                        .lineLimit(1)
+                        .layoutPriority(1)
+
+                    HStack(spacing: 8) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(commit.author)
+                                .orbitFont(.caption2, weight: .semibold)
+                            Text(AppLanguage.text("提交作者", "Author"))
+                                .font(.system(size: 9))
+                                .foregroundStyle(OrbitDesign.tertiaryText)
+                        }
+                        Text("·")
+                        Text(commit.dateText)
+                        Text("·")
+                        Text(commit.shortHash)
+                            .font(.caption2.monospaced())
+                        if isHead {
+                            Text(AppLanguage.text("当前", "HEAD"))
+                                .orbitFont(.caption2, weight: .bold)
+                                .foregroundStyle(OrbitDesign.accent)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(OrbitDesign.accent.opacity(0.10), in: Capsule())
+                        }
+                    }
+                    .orbitFont(.caption2)
+                    .foregroundStyle(OrbitDesign.secondaryText)
+                    .lineLimit(1)
+
+                    if commit.parents.count > 1 {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.triangle.branch")
+                            Text(AppLanguage.text(
+                                "合并 (commit.parents.count) 个父提交 · 点击查看父提交差异",
+                                "Merged (commit.parents.count) parent commits · click to compare parents"
+                            ))
+                        }
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundStyle(OrbitDesign.violet)
+                        .padding(.top, 1)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(HistoryCommitButtonStyle())
+        .accessibilityLabel("\(presentation.eventTitle)：\(presentation.title)，\(commit.author)，\(commit.dateText)")
+    }
+
+    private func referenceBadge(_ reference: String) -> some View {
+        let tint = referenceTint(reference)
+        return HStack(spacing: 4) {
+            Image(systemName: referenceSymbol(reference))
+                .font(.system(size: 9, weight: .semibold))
+            Text(displayReference(reference))
+                .lineLimit(1)
+        }
+        .orbitFont(.caption2, weight: .semibold)
+        .foregroundStyle(tint)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(tint.opacity(0.10), in: Capsule())
+        .overlay { Capsule().stroke(tint.opacity(0.24), lineWidth: 1) }
+    }
+
+    private func referenceSymbol(_ reference: String) -> String {
+        if reference.contains("tag:") { return "tag" }
+        if reference.contains("origin/") || reference.contains("upstream/") { return "icloud" }
+        return "arrow.triangle.branch"
+    }
+
+    private func displayReference(_ reference: String) -> String {
+        reference
+            .replacingOccurrences(of: "HEAD -> ", with: "")
+            .replacingOccurrences(of: "tag: ", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func referenceTint(_ reference: String) -> Color {
+        if reference.contains("HEAD") || reference.contains("develop") || reference.contains("main") {
+            return OrbitDesign.violet
+        }
+        if reference.contains("origin/") || reference.contains("upstream/") {
+            return OrbitDesign.blue
+        }
+        if reference.contains("tag:") {
+            return OrbitDesign.amber
+        }
+        return OrbitDesign.accent
+    }
+}
+
+private struct CompactHistoryGraphMark: View {
+    let parentCount: Int
+    let isSelected: Bool
+
+    var body: some View {
+        ZStack {
+            if parentCount > 1 {
+                Capsule()
+                    .fill(OrbitDesign.violet.opacity(0.45))
+                    .frame(width: 28, height: 2)
+                Circle().fill(OrbitDesign.canvas).frame(width: 8, height: 8)
+                    .overlay { Circle().stroke(OrbitDesign.blue, lineWidth: 1.8) }
+                    .offset(x: -14, y: -7)
+                Circle().fill(OrbitDesign.canvas).frame(width: 8, height: 8)
+                    .overlay { Circle().stroke(OrbitDesign.accent, lineWidth: 1.8) }
+                    .offset(x: -14, y: 7)
+            }
+            Circle()
+                .fill(isSelected ? OrbitDesign.accent : OrbitDesign.canvas)
+                .frame(width: parentCount > 1 ? 15 : 13, height: parentCount > 1 ? 15 : 13)
+                .overlay { Circle().stroke(parentCount > 1 ? OrbitDesign.violet : OrbitDesign.accent, lineWidth: 2) }
+        }
+        .frame(width: 34, height: 40)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct HistoryCommitPresentation: Equatable {
     let eventTitle: String
     let symbol: String
     let tint: Color

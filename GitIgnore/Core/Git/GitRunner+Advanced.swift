@@ -97,15 +97,15 @@ extension GitRunner {
             .first { $0.1 == protection.objectID }?.0
     }
 
-    func commitFileDiff(hash: String, path: String, at repositoryURL: URL) async throws -> GitFileDiff {
+    func commitFileDiff(hash: String, path: String, parent selectedParent: String? = nil, at repositoryURL: URL) async throws -> GitFileDiff {
         let normalizedHash = hash.trimmingCharacters(in: .whitespacesAndNewlines)
         let parentOutput = try await run(
             arguments: ["-C", repositoryURL.path, "rev-parse", "\(normalizedHash)^"],
             acceptedStatuses: [0, 128]
         )
-        let parent = parentOutput.terminationStatus == 0
+        let parent = selectedParent ?? (parentOutput.terminationStatus == 0
             ? parentOutput.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-            : "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+            : "4b825dc642cb6eb9a060e54bf8d69288fbee4904")
         return try await pagedDiff(arguments: [
             "-C", repositoryURL.path, "diff", "--no-ext-diff", "--find-renames",
             "--unified=3", parent, normalizedHash, "--", path
@@ -200,6 +200,19 @@ extension GitRunner {
 
     func createTag(_ name: String, at revision: String, repositoryURL: URL) async throws {
         _ = try await run(arguments: ["-C", repositoryURL.path, "tag", name, revision])
+    }
+
+    func tags(at repositoryURL: URL) async throws -> [String] {
+        let output = try await run(arguments: ["-C", repositoryURL.path, "tag", "--sort=-creatordate", "--format=%(refname:short)"])
+        return output.standardOutput.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).map(String.init)
+    }
+
+    func pushTag(_ name: String, remote: String = "origin", at repositoryURL: URL) async throws {
+        _ = try await run(arguments: ["-C", repositoryURL.path, "push", remote, "refs/tags/\(name)"])
+    }
+
+    func deleteTag(_ name: String, at repositoryURL: URL) async throws {
+        _ = try await run(arguments: ["-C", repositoryURL.path, "tag", "-d", name])
     }
 
     func merge(branch: String, at repositoryURL: URL) async throws {

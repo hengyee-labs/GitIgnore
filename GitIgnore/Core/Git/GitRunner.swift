@@ -140,7 +140,11 @@ actor GitRunner {
             guard !path.isEmpty else { throw GitRunnerError.notARepository(url) }
             return URL(fileURLWithPath: path, isDirectory: true)
         } catch {
-            throw GitRunnerError.notARepository(url)
+            if case let GitRunnerError.commandFailed(_, message, _) = error,
+               message.lowercased().contains("not a git repository") {
+                throw GitRunnerError.notARepository(url)
+            }
+            throw error
         }
     }
 
@@ -231,10 +235,12 @@ actor GitRunner {
         return parseCommitSummaries(output.standardOutput)
     }
 
-    /// Includes unlabeled ancestors that ref decoration matching would miss.
-    func currentBranchCommitIDs(at repositoryURL: URL, limit: Int = 2000) async throws -> Set<String> {
-        let output = try await run(arguments: ["-C", repositoryURL.path, "rev-list", "--topo-order", "-n", "\(limit)", "HEAD"])
-        return Set(output.standardOutput.split(whereSeparator: \.isNewline).map(String.init))
+    func historyPage(at repositoryURL: URL, query: GitHistoryQuery, skip: Int = 0) async throws -> [GitCommitSummary] {
+        let output = try await run(arguments: [
+            "-C", repositoryURL.path, "log", "--date=format:%Y-%m-%d %H:%M",
+            "--pretty=format:\(Self.commitLogFormat)"
+        ] + query.arguments(skip: skip, limit: 100))
+        return parseCommitSummaries(output.standardOutput)
     }
 
     private static let commitLogFormat = "%H%x1f%h%x1f%an%x1f%ad%x1f%s%x1f%D%x1f%P%x1e"
@@ -260,22 +266,24 @@ actor GitRunner {
             }
     }
 
-    func commitDetail(hash: String, at repositoryURL: URL) async throws -> GitCommitDetail {
+    func commitDetail(hash: String, parent: String? = nil, at repositoryURL: URL) async throws -> GitCommitDetail {
         let normalizedHash = hash.trimmingCharacters(in: .whitespacesAndNewlines)
         async let messageOutput = run(arguments: [
             "-C", repositoryURL.path, "show", "-s", "--format=%B", normalizedHash, "--"
         ])
-        async let filesOutput = run(arguments: [
-            "-C", repositoryURL.path, "show", "--format=", "--name-status", "--find-renames", normalizedHash, "--"
-        ])
+        let base = ["-C", repositoryURL.path] + (parent == nil ? ["show", "--format=", "--diff-merges=first-parent"] : ["diff"])
+        let revisions = parent.map { [$0, normalizedHash, "--"] } ?? [normalizedHash, "--"]
+        async let filesOutput = run(arguments: base + ["--name-status", "-z", "--no-renames"] + revisions)
+        async let statsOutput = run(arguments: base + ["--numstat", "-z", "--no-renames"] + revisions)
         let message = try await messageOutput.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fileLines = try await filesOutput.standardOutput
-            .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
-            .map(String.init)
-
-        let files = fileLines.compactMap { line -> GitCommitFileChange? in
-            let fields = line.split(separator: "\t").map(String.init)
-            guard let status = fields.first, let path = fields.last, !path.isEmpty else { return nil }
+        let fields = try await filesOutput.standardOutput.split(separator: "\0").map(String.init)
+        let stats = try await statsOutput.standardOutput.split(separator: "\0").reduce(into: [String: (Int?, Int?)]()) { result, record in
+            let values = record.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+            if values.count == 3 { result[String(values[2])] = (Int(values[0]), Int(values[1])) }
+        }
+        let files = stride(from: 0, to: fields.count - fields.count % 2, by: 2).map { index -> GitCommitFileChange in
+            let status = fields[index]
+            let path = fields[index + 1]
             let kind: GitFileChangeKind
             switch status.first {
             case "A": kind = .added
@@ -284,7 +292,7 @@ actor GitRunner {
             case "U": kind = .conflicted
             default: kind = .modified
             }
-            return GitCommitFileChange(path: path, kind: kind)
+            return GitCommitFileChange(path: path, kind: kind, addedLines: stats[path]?.0, removedLines: stats[path]?.1)
         }
         return GitCommitDetail(
             message: message,
@@ -753,37 +761,23 @@ final class GitDiffPagedReader: @unchecked Sendable {
     deinit { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
 
     func readLines(start: Int, count: Int) -> [String] {
-        guard count > 0, start < totalLineCount else { return [] }
+        guard start >= 0, count > 0, start < totalLineCount else { return [] }
         lock.lock()
         defer { lock.unlock() }
         let block = min(start / checkpointStride, checkpoints.count - 1)
         let lineAtBlock = block * checkpointStride
-        let handle = try? FileHandle(forReadingFrom: fileURL)
-        guard let handle else { return [] }
-        defer { try? handle.close() }
-        try? handle.seek(toOffset: checkpoints[block])
         var line = lineAtBlock
         var result: [String] = []
-        var pending = Data()
-        while line < start + count,
-              let chunk = try? handle.read(upToCount: 64 * 1_024),
-              !chunk.isEmpty {
-            pending.append(chunk)
-            while let newline = pending.firstIndex(of: 10) {
-                let bytes = pending.prefix(upTo: newline)
-                if line >= start { result.append(String(decoding: bytes, as: UTF8.self)) }
-                pending.removeSubrange(...newline)
-                line += 1
-                if line >= start + count { return result }
-            }
-            if pending.count > 256 * 1_024 {
-                if line >= start { result.append(String(decoding: pending.prefix(256 * 1_024), as: UTF8.self) + " …") }
-                pending.removeAll(keepingCapacity: true)
-                line += 1
-            }
+        try? DiffTextTools.scan(fileURL, offset: checkpoints[block]) { text, truncated in
+            if line >= start { result.append(text + (truncated ? " …" : "")) }
+            line += 1
+            return line < start + count
         }
-        if line >= start, !pending.isEmpty { result.append(String(decoding: pending, as: UTF8.self)) }
         return result
+    }
+
+    func search(_ query: String) throws -> DiffSearchResult {
+        try DiffTextTools.search(file: fileURL, lines: [], query: query)
     }
 
     func readAllText(maxBytes: Int = 8 * 1_024 * 1_024) -> String {

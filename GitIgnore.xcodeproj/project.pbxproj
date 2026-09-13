@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        AA0000000000000000000103 = {isa = PBXBuildFile; fileRef = BB0000000000000000000103; };
+        AA0000000000000000000102 = {isa = PBXBuildFile; fileRef = BB0000000000000000000102; };
+		AA0000000000000000000101 /* RepositoryAccessStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000101; };
 		A00000000000000000000001 /* GitIgnoreApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000001 /* GitIgnoreApp.swift */; };
 		A00000000000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000002 /* AppState.swift */; };
 		A00000000000000000000003 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000003 /* Models.swift */; };
@@ -95,6 +98,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        BB0000000000000000000103 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffTextTools.swift; sourceTree = "<group>"; };
+        BB0000000000000000000102 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHistoryQuery.swift; sourceTree = "<group>"; };
+		BB0000000000000000000101 /* RepositoryAccessStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoryAccessStore.swift; sourceTree = "<group>"; };
 		B00000000000000000000001 /* GitIgnoreApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitIgnoreApp.swift; sourceTree = "<group>"; };
 		B00000000000000000000002 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		B00000000000000000000003 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -253,6 +259,9 @@
 			isa = PBXGroup;
 			children = (
 				B00000000000000000000004 /* GitRunner.swift */,
+				BB0000000000000000000101 /* RepositoryAccessStore.swift */,
+                BB0000000000000000000102,
+                BB0000000000000000000103,
 				B00000000000000000000030 /* RepositoryFileWatcher.swift */,
 				B00000000000000000000040 /* GitPatchParser.swift */,
 				B00000000000000000000067 /* GitPatchSelection.swift */,
@@ -419,6 +428,9 @@
 				A00000000000000000000021 /* AppState+LiveRefresh.swift in Sources */,
 				A00000000000000000000003 /* Models.swift in Sources */,
 				A00000000000000000000004 /* GitRunner.swift in Sources */,
+				AA0000000000000000000101 /* RepositoryAccessStore.swift in Sources */,
+                AA0000000000000000000102,
+                AA0000000000000000000103,
 				A00000000000000000000020 /* RepositoryFileWatcher.swift in Sources */,
 				A00000000000000000000005 /* OrbitDesignSystem.swift in Sources */,
 				A00000000000000000000006 /* RootView.swift in Sources */,
@@ -556,7 +568,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.hengyee.Orbit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -585,7 +597,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0.0;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.hengyee.Orbit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

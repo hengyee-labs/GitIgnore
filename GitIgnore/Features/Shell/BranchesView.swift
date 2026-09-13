@@ -26,6 +26,7 @@ struct BranchesView: View {
                     LazyVStack(alignment: .leading, spacing: 10) {
                         localBranchGroup
                         if !appState.remoteBranches.isEmpty { remoteBranchGroup }
+                        tagsGroup
                     }
                     .padding(.horizontal, 24)
                     .padding(.vertical, 18)
@@ -139,6 +140,30 @@ struct BranchesView: View {
                 remoteBranchRow(branch)
                 if index < appState.remoteBranches.count - 1 {
                     Divider().padding(.leading, 58).overlay(OrbitDesign.separator)
+                }
+            }
+        }
+    }
+
+    private var tagsGroup: some View {
+        branchGroup(title: AppLanguage.text("标签", "Tags"), count: appState.tags.count) {
+            if appState.tags.isEmpty {
+                Text(AppLanguage.text("暂无标签", "No tags yet"))
+                    .orbitFont(.caption)
+                    .foregroundStyle(OrbitDesign.secondaryText)
+                    .padding(14)
+            } else {
+                ForEach(appState.tags, id: \.self) { tag in
+                    HStack(spacing: 11) {
+                        Image(systemName: "tag.fill").foregroundStyle(OrbitDesign.amber)
+                        Text(tag).orbitFont(.callout, weight: .medium)
+                        Spacer()
+                        Button(AppLanguage.text("推送", "Push"), systemImage: "arrow.up") {
+                            Task { await appState.pushTag(tag) }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
                 }
             }
         }

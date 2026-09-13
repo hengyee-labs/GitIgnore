@@ -3,19 +3,44 @@ import SwiftUI
 struct CommitInspector: View {
     @Environment(AppState.self) private var appState
     @State private var selectedFilePath: String?
+    @State private var expandedDiffPaths: Set<String> = []
     let commit: GitCommitSummary
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                inspectorEyebrow("提交详情")
+                inspectorEyebrow(AppLanguage.text("提交详情", "Commit Details"))
                 Text(commit.subject)
                     .orbitFont(.title3, weight: .bold)
                     .fixedSize(horizontal: false, vertical: true)
                 authorRow
+                if !commit.parents.isEmpty {
+                    Picker(AppLanguage.text("对比父提交", "Compare with Parent"), selection: Binding(
+                        get: { appState.selectedCommitParent ?? commit.parents[0] },
+                        set: { parent in
+                            selectedFilePath = nil
+                            Task { await appState.selectCommit(commit, parent: parent) }
+                        }
+                    )) {
+                        ForEach(Array(commit.parents.enumerated()), id: \.element) { index, hash in
+                            Text(AppLanguage.text("父提交 \(index + 1) · \(hash.prefix(8))", "Parent \(index + 1) · \(hash.prefix(8))")).tag(hash)
+                        }
+                    }
+                    .controlSize(.small)
+                    if commit.parents.count == 1 {
+                        Button {
+                            Task { await appState.showParentComparison(commit) }
+                        } label: {
+                            Label(AppLanguage.text("查看父提交差异", "View Parent Diff"), systemImage: "arrow.left.arrow.right")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .help(AppLanguage.text("将这次提交与父提交进行对比", "Compare this commit with its parent"))
+                    }
+                }
                 Divider()
-                detailRow("短哈希", value: commit.shortHash, monospaced: true)
-                detailRow("完整哈希", value: commit.hash, monospaced: true)
+                detailRow(AppLanguage.text("短哈希", "Short Hash"), value: commit.shortHash, monospaced: true)
+                detailRow(AppLanguage.text("完整哈希", "Full Hash"), value: commit.hash, monospaced: true)
                 HStack {
                     Text("提交操作")
                         .orbitFont(.caption, weight: .bold)
@@ -24,7 +49,7 @@ struct CommitInspector: View {
                     CommitActionMenu(commit: commit)
                 }
                 if !commit.refs.isEmpty {
-                    detailRow("引用", value: commit.refs.joined(separator: ", "))
+                    detailRow(AppLanguage.text("引用", "References"), value: commit.refs.joined(separator: ", "))
                 }
                 HStack(spacing: 8) {
                     statusPill(title: AppLanguage.text("当前分支", "Current branch"), value: appState.repository?.branch ?? "-")
@@ -124,6 +149,12 @@ struct CommitInspector: View {
                                         .truncationMode(.middle)
                                 }
                                 Spacer(minLength: 5)
+                                if let added = file.addedLines, let removed = file.removedLines {
+                                    Text("+\(added) −\(removed)")
+                                        .font(.caption2.monospacedDigit())
+                                        .foregroundStyle(OrbitDesign.secondaryText)
+                                        .fixedSize()
+                                }
                                 Text(file.kind.title)
                                     .orbitFont(.caption2, weight: .semibold)
                                     .foregroundStyle(commitFileColor(file.kind))
@@ -135,7 +166,7 @@ struct CommitInspector: View {
                             .frame(minHeight: 42)
                         }
                         .buttonStyle(.plain)
-                        .help(isSelected ? "收起文件变更" : "查看文件变更")
+                        .help(isSelected ? AppLanguage.text("收起文件变更", "Collapse File Changes") : AppLanguage.text("查看文件变更", "View File Changes"))
 
                         if isSelected {
                             Divider().overlay(OrbitDesign.accent.opacity(0.18))
@@ -179,20 +210,45 @@ struct CommitInspector: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 8)
             } else if let fileDiff = appState.selectedCommitFileDiff {
-                HStack {
-                    Spacer()
-                    Button {
-                        appState.presentDiffFocus()
-                    } label: {
-                        Label(AppLanguage.text("完整阅读", "Full Reader"), systemImage: "arrow.up.left.and.arrow.down.right")
+                let plan = fileDiff.interactivePreviewPlan
+                if plan.isBudgeted && !expandedDiffPaths.contains(file.path) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(
+                            AppLanguage.text("这个 Diff 较大，已暂缓渲染完整代码。", "This Diff is large, so full rendering is deferred."),
+                            systemImage: "speedometer"
+                        )
+                        .orbitFont(.caption)
+                        .foregroundStyle(OrbitDesign.secondaryText)
+                        Text(AppLanguage.text(
+                            "文件列表和变更统计仍可用，点击后再加载代码内容。",
+                            "File metadata and change counts remain available. Load code only when needed."
+                        ))
+                        .orbitFont(.caption2)
+                        .foregroundStyle(OrbitDesign.tertiaryText)
+                        Button {
+                            expandedDiffPaths.insert(file.path)
+                        } label: {
+                            Label(AppLanguage.text("加载完整 Diff", "Load Full Diff"), systemImage: "arrow.down.circle")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .help(AppLanguage.text("在专注模式中阅读此文件 Diff", "Read this file Diff in focus mode"))
+                    .padding(.vertical, 8)
+                } else {
+                    HStack {
+                        Spacer()
+                        Button {
+                            appState.presentDiffFocus()
+                        } label: {
+                            Label(AppLanguage.text("完整阅读", "Full Reader"), systemImage: "arrow.up.left.and.arrow.down.right")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    OrbitDiffViewer(diff: fileDiff, title: AppLanguage.text("当前文件变更", "File Changes"))
+                        .id("\(commit.id)-\(file.path)")
+                        .padding(.top, 4)
                 }
-                OrbitDiffViewer(diff: fileDiff, title: "当前文件变更")
-                    .id("\(commit.id)-\(file.path)")
-                    .padding(.top, 4)
             }
         }
     }
@@ -208,7 +264,7 @@ struct CommitInspector: View {
 
     private func parentPath(_ path: String) -> String {
         let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
-        return parent == "." || parent == "/" ? "项目根目录" : parent
+        return parent == "." || parent == "/" ? AppLanguage.text("项目根目录", "Repository Root") : parent
     }
 
     private func commitFileColor(_ kind: GitFileChangeKind) -> Color {

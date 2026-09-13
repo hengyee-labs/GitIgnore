@@ -175,7 +175,8 @@ extension AppState {
         selectedCommitFilePath = file.path
         selectedCommitFileDiff = nil
         isLoadingCommitFileDiff = false
-        let cacheKey = "\(commit.hash):\(file.path)"
+        let parent = selectedCommitParent
+        let cacheKey = "\(repository.path):\(commit.hash):\(parent ?? "root"):\(file.path)"
         if let cached = commitFileDiffCache[cacheKey] {
             selectedCommitFileDiff = cached
             touchCommitFileCache(cacheKey)
@@ -184,7 +185,7 @@ extension AppState {
 
         isLoadingCommitFileDiff = true
         let root = URL(fileURLWithPath: repository.path, isDirectory: true)
-        let task = Task { try await gitRunner.commitFileDiff(hash: commit.hash, path: file.path, at: root) }
+        let task = Task { try await gitRunner.commitFileDiff(hash: commit.hash, path: file.path, parent: parent, at: root) }
         commitFileLoadTask = task
         do {
             let diff = try await task.value

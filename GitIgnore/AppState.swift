@@ -17,12 +17,14 @@ final class AppState {
     var commits: [GitCommitSummary] = []
     var incomingCommits: [GitCommitSummary] = []
     var branches: [GitBranchSummary] = []
+    var tags: [String] = []
     var remoteBranches: [GitRemoteBranchSummary] = []
     var stashes: [GitStashSummary] = []
     var worktrees: [GitWorktreeSummary] = []
     var remoteInfo: GitRemoteInfo?
     var gitIdentity = GitIdentity(name: "", email: "")
     var selectedCommit: GitCommitSummary?
+    var selectedCommitParent: String?
     var selectedCommitDetail: GitCommitDetail?
     var selectedCommitFilePath: String?
     var selectedCommitFileDiff: GitFileDiff?
@@ -85,8 +87,9 @@ final class AppState {
     @ObservationIgnored var commitDetailLoadGeneration: UInt = 0
     @ObservationIgnored var commitFileLoadGeneration: UInt = 0
     @ObservationIgnored var stashPreviewGeneration: UInt = 0
-    @ObservationIgnored private var securityScopedURLs: [String: URL] = [:]
-    private let repositoryBookmarksKey = "orbit.repositoryBookmarks"
+    @ObservationIgnored private let repositoryAccess = RepositoryAccessStore()
+    @ObservationIgnored private var accessRecoveryAttempts: Set<String> = []
+    @ObservationIgnored private var isAccessPanelPresented = false
     init() {
         if let rawSection = UserDefaults.standard.string(forKey: "orbit.lastSelectedSection"),
            let savedSection = SidebarSection(rawValue: rawSection) {
@@ -132,8 +135,8 @@ final class AppState {
         }
     }
 
-    func openRepository(_ url: URL, selectOverview: Bool = false) async {
-        let accessURL = resolveRepositoryAccessURL(url)
+    func openRepository(_ url: URL, selectOverview: Bool = false, allowsAccessRecovery: Bool = true) async {
+        let accessURL = repositoryAccess.access(url)
         let performanceToken = PerformanceDiagnostics.begin(category: "Repository", name: "open-or-switch")
         defer { PerformanceDiagnostics.end(performanceToken, cancelled: Task.isCancelled) }
         let loadID = UUID()
@@ -196,6 +199,7 @@ final class AppState {
             commits = loadedCommits
             incomingCommits = loadedIncomingCommits
             branches = loadedBranches
+            tags = (try? await gitRunner.tags(at: root)) ?? []
             remoteBranches = loadedRemoteBranches
             stashes = loadedStashes
             worktrees = loadedWorktrees
@@ -240,8 +244,12 @@ final class AppState {
             return
         } catch {
             if activeRepositoryLoadID == loadID {
-                if case GitRunnerError.notARepository = error {
-                    await requestExistingRepositoryAccess(accessURL)
+                if allowsAccessRecovery, isLocalRepositoryAccessError(error),
+                   accessRecoveryAttempts.insert(accessURL.standardizedFileURL.path).inserted,
+                   requestExistingRepositoryAccess(accessURL) {
+                    // Saving a grant resets suppression; keep this automatic retry one-shot.
+                    accessRecoveryAttempts.insert(accessURL.standardizedFileURL.path)
+                    await openRepository(accessURL, selectOverview: selectOverview, allowsAccessRecovery: false)
                 } else {
                     present(error: error, title: "无法打开仓库")
                 }
@@ -259,6 +267,7 @@ final class AppState {
         repositoryOpenTask?.cancel()
         repositoryOpenTask = nil
         cancelRepositoryScopedWork()
+        repositoryAccess.stopAll()
     }
 
     func cancelRepositoryScopedWork() {
@@ -370,11 +379,13 @@ final class AppState {
         }
     }
 
-    func selectCommit(_ commit: GitCommitSummary) async {
+    func selectCommit(_ commit: GitCommitSummary, parent: String? = nil) async {
         commitDetailLoadGeneration &+= 1
         let loadGeneration = commitDetailLoadGeneration
         commitDetailLoadTask?.cancel()
         commitFileLoadTask?.cancel()
+        commitFileLoadGeneration &+= 1
+        selectedCommitParent = parent ?? commit.parents.first
         selectedCommit = commit
         selectedCommitDetail = nil
         selectedCommitFilePath = nil
@@ -384,10 +395,12 @@ final class AppState {
         selectedImageDiffPreview = nil
         guard let repository else { return }
 
-        if let cached = commitDetailCache[commit.id] {
+        let comparisonParent = selectedCommitParent
+        let cacheKey = "\(repository.path):\(commit.id):\(comparisonParent ?? "root")"
+        if let cached = commitDetailCache[cacheKey] {
             isLoadingCommitDetail = false
             selectedCommitDetail = cached
-            touchCommitDetailCache(commit.id)
+            touchCommitDetailCache(cacheKey)
             return
         }
         isLoadingCommitDetail = true
@@ -399,6 +412,7 @@ final class AppState {
         let task = Task {
             try await gitRunner.commitDetail(
                 hash: commit.hash,
+                parent: comparisonParent,
                 at: URL(fileURLWithPath: repository.path, isDirectory: true)
             )
         }
@@ -407,8 +421,8 @@ final class AppState {
             let detail = try await task.value
             guard commitDetailLoadGeneration == loadGeneration, selectedCommit?.id == commit.id else { return }
             selectedCommitDetail = detail
-            commitDetailCache[commit.id] = detail
-            touchCommitDetailCache(commit.id)
+            commitDetailCache[cacheKey] = detail
+            touchCommitDetailCache(cacheKey)
         } catch is CancellationError {
             return
         } catch {
@@ -667,47 +681,61 @@ final class AppState {
         persistRecentRepositories()
     }
 
-    private func resolveRepositoryAccessURL(_ url: URL) -> URL {
-        let path = url.standardizedFileURL.path
-        if let existing = securityScopedURLs[path] { return existing }
-        let bookmarks = UserDefaults.standard.dictionary(forKey: repositoryBookmarksKey) as? [String: Data]
-        if let data = bookmarks?[path] {
-            var stale = false
-            do {
-                let resolved = try URL(resolvingBookmarkData: data, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale)
-                if resolved.startAccessingSecurityScopedResource() { securityScopedURLs[path] = resolved }
-                if stale { saveRepositoryBookmark(for: resolved) }
-                return resolved
-            } catch {
-                UserDefaults.standard.set(nil, forKey: repositoryBookmarksKey)
+    @discardableResult
+    func saveRepositoryBookmark(for url: URL) -> Bool {
+        do {
+            try repositoryAccess.save(url)
+            accessRecoveryAttempts = accessRecoveryAttempts.filter {
+                !RepositoryAccessStore.contains(url, URL(fileURLWithPath: $0, isDirectory: true))
+            }
+            return true
+        } catch {
+            presentMessage(AppLanguage.text("无法保存目录授权；当前项目记录未改变。请通过项目菜单重试授权。", "Could not save folder access. Project records are unchanged. Retry from the project menu."), title: AppLanguage.text("授权未保存", "Access Not Saved"))
+            return false
+        }
+    }
+
+    func authorizeRepositoryParent() {
+        guard let repository, !isPerformingGitAction else { return }
+        let url = URL(fileURLWithPath: repository.path, isDirectory: true)
+        if requestExistingRepositoryAccess(url) {
+            repositoryOpenTask?.cancel()
+            repositoryOpenTask = Task { [weak self] in
+                await self?.openRepository(url, allowsAccessRecovery: false)
             }
         }
-        return url
     }
 
-    func saveRepositoryBookmark(for url: URL) {
-        guard let data = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) else { return }
-        var bookmarks = UserDefaults.standard.dictionary(forKey: repositoryBookmarksKey) as? [String: Data] ?? [:]
-        bookmarks[url.standardizedFileURL.path] = data
-        UserDefaults.standard.set(bookmarks, forKey: repositoryBookmarksKey)
-    }
-
-    private func requestExistingRepositoryAccess(_ url: URL) async {
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            presentMessage("原项目路径已不存在，请从新的位置打开仓库。", title: "项目路径不可用")
-            return
-        }
+    private func requestExistingRepositoryAccess(_ url: URL) -> Bool {
+        guard !isAccessPanelPresented else { return false }
+        isAccessPanelPresented = true
+        defer { isAccessPanelPresented = false }
         let panel = NSOpenPanel()
-        panel.title = "授权访问已有项目"
-        panel.message = "只需授权一次，无需重新导入项目。"
-        panel.prompt = "授权并打开"
+        panel.title = AppLanguage.text("授权项目父目录", "Authorize Projects Folder")
+        panel.message = AppLanguage.text("选择包含此项目的父目录（例如 GitJava）。其下项目将共用访问授权；不会导入父目录或改变现有项目记录。", "Choose a parent folder containing this project. Projects inside it will share access. The folder will not be imported and existing project records stay unchanged.")
+        panel.prompt = AppLanguage.text("授权此目录", "Authorize Folder")
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
-        panel.directoryURL = url
-        guard panel.runModal() == .OK, let selectedURL = panel.url else { return }
-        saveRepositoryBookmark(for: selectedURL)
-        beginOpeningRepository(selectedURL)
+        panel.canCreateDirectories = false
+        panel.directoryURL = url.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let selectedURL = panel.url else { return false }
+        guard RepositoryAccessStore.contains(selectedURL.resolvingSymlinksInPath(), url.resolvingSymlinksInPath()) else {
+            presentMessage(AppLanguage.text("请选择当前项目或包含它的父目录。现有项目未改变。", "Select this project or a folder containing it. Existing projects are unchanged."), title: AppLanguage.text("目录不包含当前项目", "Folder Does Not Contain Project"))
+            return false
+        }
+        return saveRepositoryBookmark(for: selectedURL)
+    }
+
+    private func isLocalRepositoryAccessError(_ error: Error) -> Bool {
+        if case let GitRunnerError.commandFailed(arguments, message, _) = error {
+            guard arguments.contains("rev-parse") else { return false }
+            let text = message.lowercased()
+            return text.contains("operation not permitted") || text.contains("permission denied")
+        }
+        let value = error as NSError
+        return (value.domain == NSCocoaErrorDomain && [NSFileReadNoPermissionError, NSFileWriteNoPermissionError].contains(value.code))
+            || (value.domain == NSPOSIXErrorDomain && [1, 13].contains(value.code))
     }
 
     func persistRecentRepositories() {

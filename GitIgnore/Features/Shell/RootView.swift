@@ -141,16 +141,20 @@ struct RootView: View {
                         .opacity(shouldShowInspector ? 1 : 0)
                         .allowsHitTesting(shouldShowInspector)
 
-                    InspectorView()
+                    GeometryReader { viewport in
+                        InspectorView()
+                            .frame(width: viewport.size.width, height: viewport.size.height)
+                    }
                         .frame(width: inspectorWidth)
-                        .frame(width: shouldShowInspector ? inspectorWidth : 0, alignment: .trailing)
-                        .clipped()
                         .opacity(shouldShowInspector ? 1 : 0)
                         .offset(x: shouldShowInspector || reduceMotion ? 0 : 8)
+                        .animation(OrbitMotion.inspector(reduceMotion: reduceMotion), value: shouldShowInspector)
+                        // Reserve the final width once; animate only the panel's appearance.
+                        .frame(width: shouldShowInspector ? inspectorWidth : 0, alignment: .trailing)
+                        .clipped()
                         .allowsHitTesting(shouldShowInspector)
                         .accessibilityHidden(!shouldShowInspector)
                 }
-                .animation(OrbitMotion.inspector(reduceMotion: reduceMotion), value: shouldShowInspector)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
