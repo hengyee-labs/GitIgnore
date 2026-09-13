@@ -1,5 +1,7 @@
 name: Release GitIgnore
 
+# Builds can be replayed for an existing tag from workflow_dispatch.
+
 on:
   workflow_dispatch:
     inputs:
