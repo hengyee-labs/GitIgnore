@@ -87,11 +87,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$VERSION" \
-            "GitIgnore-${VERSION}.zip" \
-            "GitIgnore-${VERSION}.zip.sha256" \
-            "GitIgnore-${VERSION}.dmg" \
-            "GitIgnore-${VERSION}.dmg.sha256" \
-            --title "GitIgnore ${VERSION}" \
-            --verify-tag \
-            --generate-notes
+          ASSETS=(
+            "GitIgnore-${VERSION}.zip"
+            "GitIgnore-${VERSION}.zip.sha256"
+            "GitIgnore-${VERSION}.dmg"
+            "GitIgnore-${VERSION}.dmg.sha256"
+          )
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" "${ASSETS[@]}" --clobber
+          else
+            for attempt in 1 2 3; do
+              if gh release create "$VERSION" "${ASSETS[@]}" \
+                --title "GitIgnore ${VERSION}" \
+                --verify-tag \
+                --generate-notes; then
+                break
+              fi
+              if [[ "$attempt" == 3 ]]; then
+                exit 1
+              fi
+              sleep 15
+            done
+          fi
